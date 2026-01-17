@@ -1,0 +1,24 @@
+# ملفات Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ملفات Excel المحلية
+*.xlsx
+backups/
+!machines.xlsx
+
+# إعدادات IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# نظام التشغيل
+.DS_Store
+Thumbs.db
+
+# Streamlit secrets
+.streamlit/secrets.toml
