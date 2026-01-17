@@ -6,7 +6,6 @@ import base64
 from datetime import datetime, timedelta
 import plotly.express as px
 import time
-import json
 from io import BytesIO
 
 # ===============================
@@ -15,9 +14,8 @@ from io import BytesIO
 APP_CONFIG = {
     "APP_TITLE": "سيرفيس تحضيرات بيل يارن 1 🏭",
     "APP_ICON": "⚙️",
-    "EXCEL_FILE": "machines.xlsx",  # ملف Excel المحلي
+    "EXCEL_FILE": "machines.xlsx",
     "GITHUB_REPO": "mahmedabdallh123/CARD-ANALYSIS",
-    "GITHUB_FILE": "machines.xlsx",  # نفس اسم الملف المحلي
 }
 
 # إعداد الصفحة
@@ -51,22 +49,10 @@ st.markdown("""
         border-radius: 8px;
         font-weight: bold;
         font-size: 1rem;
-        transition: all 0.3s;
-    }
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 12px rgba(0,0,0,0.2);
     }
     .success-box {
         background-color: #d4edda;
         border: 1px solid #c3e6cb;
-        border-radius: 8px;
-        padding: 15px;
-        margin: 10px 0;
-    }
-    .warning-box {
-        background-color: #fff3cd;
-        border: 1px solid #ffeaa7;
         border-radius: 8px;
         padding: 15px;
         margin: 10px 0;
@@ -79,230 +65,260 @@ st.markdown("""
         text-align: center;
         margin: 5px;
     }
-    .machine-card {
-        background: white;
-        padding: 15px;
-        border-radius: 8px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        margin: 10px 0;
-        border-left: 5px solid #1E3A8A;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 # ===============================
-# 🗄 نظام Excel البسيط
+# 🗄 نظام Excel المبسط (بدون أخطاء)
 # ===============================
-class ExcelSystem:
-    def __init__(self):
-        self.excel_file = APP_CONFIG["EXCEL_FILE"]
-        self.setup_excel()
+class SimpleExcelDB:
+    def __init__(self, file_path="machines.xlsx"):
+        self.file_path = file_path
+        self.setup_database()
     
-    def setup_excel(self):
-        """إنشاء ملف Excel جديد إذا لم يكن موجوداً"""
-        if not os.path.exists(self.excel_file):
-            # إنشاء DataFrame فارغ
-            machines_df = pd.DataFrame(columns=[
-                'id', 'اسم الماكينة', 'الموديل', 'الرقم التسلسلي',
-                'تاريخ التركيب', 'إجمالي ساعات التشغيل',
-                'القسم', 'ملاحظات', 'نشطة', 'تاريخ الإضافة'
-            ])
+    def setup_database(self):
+        """إعداد قاعدة البيانات - طريقة جديدة موثوقة"""
+        try:
+            # إذا الملف غير موجود، ننشئه بطريقة مباشرة
+            if not os.path.exists(self.file_path):
+                # إنشاء DataFrames فارغة
+                machines_df = pd.DataFrame(columns=[
+                    'id', 'اسم الماكينة', 'الموديل', 'الرقم التسلسلي',
+                    'تاريخ التركيب', 'إجمالي ساعات التشغيل',
+                    'القسم', 'ملاحظات', 'نشطة', 'تاريخ الإضافة'
+                ])
+                
+                tasks_df = pd.DataFrame(columns=[
+                    'id', 'معرف الماكينة', 'نوع الصيانة', 'الفترة بين الصيانة (ساعات)',
+                    'تاريخ آخر صيانة', 'عدد ساعات التشغيل عند آخر صيانة',
+                    'عدد الساعات المتبقية', 'تاريخ الصيانة القادم',
+                    'وصف المهمة', 'نشطة', 'تاريخ الإضافة'
+                ])
+                
+                logs_df = pd.DataFrame(columns=[
+                    'id', 'معرف الماكينة', 'معرف المهمة', 'تاريخ الصيانة',
+                    'عدد ساعات التشغيل', 'تمت بواسطة', 'الأجزاء المستبدلة',
+                    'ملاحظات', 'تاريخ التسجيل'
+                ])
+                
+                # حفظ بسيط بدون مشاكل
+                with pd.ExcelWriter(self.file_path, engine='openpyxl') as writer:
+                    machines_df.to_excel(writer, sheet_name='الماكينات', index=False)
+                    tasks_df.to_excel(writer, sheet_name='المهام', index=False)
+                    logs_df.to_excel(writer, sheet_name='السجل', index=False)
+                
+                st.success("✅ تم إنشاء ملف Excel جديد")
+        except Exception as e:
+            st.error(f"❌ خطأ في إنشاء الملف: {str(e)}")
+    
+    def load_sheet(self, sheet_name):
+        """تحميل ورقة من Excel - طريقة آمنة"""
+        try:
+            if os.path.exists(self.file_path):
+                df = pd.read_excel(self.file_path, sheet_name=sheet_name)
+                # تأكد أن DataFrame ليس فارغاً تماماً
+                if df.empty:
+                    # إرجاع DataFrame بالأعمدة المناسبة
+                    if sheet_name == 'الماكينات':
+                        return pd.DataFrame(columns=[
+                            'id', 'اسم الماكينة', 'الموديل', 'الرقم التسلسلي',
+                            'تاريخ التركيب', 'إجمالي ساعات التشغيل',
+                            'القسم', 'ملاحظات', 'نشطة', 'تاريخ الإضافة'
+                        ])
+                    elif sheet_name == 'المهام':
+                        return pd.DataFrame(columns=[
+                            'id', 'معرف الماكينة', 'نوع الصيانة', 'الفترة بين الصيانة (ساعات)',
+                            'تاريخ آخر صيانة', 'عدد ساعات التشغيل عند آخر صيانة',
+                            'عدد الساعات المتبقية', 'تاريخ الصيانة القادم',
+                            'وصف المهمة', 'نشطة', 'تاريخ الإضافة'
+                        ])
+                    elif sheet_name == 'السجل':
+                        return pd.DataFrame(columns=[
+                            'id', 'معرف الماكينة', 'معرف المهمة', 'تاريخ الصيانة',
+                            'عدد ساعات التشغيل', 'تمت بواسطة', 'الأجزاء المستبدلة',
+                            'ملاحظات', 'تاريخ التسجيل'
+                        ])
+                return df
+            return pd.DataFrame()
+        except Exception as e:
+            st.warning(f"⚠️ خطأ في تحميل {sheet_name}: {str(e)}")
+            return pd.DataFrame()
+    
+    def save_all_sheets(self, machines_df, tasks_df, logs_df):
+        """حفظ جميع الأوراق مرة واحدة - طريقة موثوقة"""
+        try:
+            # استخدام BytesIO أولاً للتأكد
+            output = BytesIO()
             
-            tasks_df = pd.DataFrame(columns=[
-                'id', 'معرف الماكينة', 'نوع الصيانة', 'الفترة بين الصيانة (ساعات)',
-                'تاريخ آخر صيانة', 'عدد ساعات التشغيل عند آخر صيانة',
-                'عدد الساعات المتبقية', 'تاريخ الصيانة القادم',
-                'وصف المهمة', 'نشطة', 'تاريخ الإضافة'
-            ])
-            
-            logs_df = pd.DataFrame(columns=[
-                'id', 'معرف الماكينة', 'معرف المهمة', 'تاريخ الصيانة',
-                'عدد ساعات التشغيل', 'تمت بواسطة', 'الأجزاء المستبدلة',
-                'ملاحظات', 'تاريخ التسجيل'
-            ])
-            
-            # حفظ في Excel
-            with pd.ExcelWriter(self.excel_file, engine='openpyxl') as writer:
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 machines_df.to_excel(writer, sheet_name='الماكينات', index=False)
                 tasks_df.to_excel(writer, sheet_name='المهام', index=False)
                 logs_df.to_excel(writer, sheet_name='السجل', index=False)
             
-            st.success(f"✅ تم إنشاء ملف Excel جديد: {self.excel_file}")
-    
-    def load_sheet(self, sheet_name):
-        """تحميل ورقة من Excel"""
-        try:
-            if os.path.exists(self.excel_file):
-                df = pd.read_excel(self.excel_file, sheet_name=sheet_name)
-                return df
-            return pd.DataFrame()
-        except:
-            return pd.DataFrame()
-    
-    def save_sheet(self, sheet_name, df):
-        """حفظ ورقة في Excel"""
-        try:
-            # إذا الملف موجود، نحفظ جميع الأوراق
-            if os.path.exists(self.excel_file):
-                with pd.ExcelFile(self.excel_file, engine='openpyxl') as xls:
-                    sheet_names = xls.sheet_names
-                
-                with pd.ExcelWriter(self.excel_file, engine='openpyxl') as writer:
-                    for sheet in sheet_names:
-                        if sheet == sheet_name:
-                            df.to_excel(writer, sheet_name=sheet_name, index=False)
-                        else:
-                            old_df = pd.read_excel(self.excel_file, sheet_name=sheet)
-                            old_df.to_excel(writer, sheet_name=sheet, index=False)
-            else:
-                # إنشاء ملف جديد
-                with pd.ExcelWriter(self.excel_file, engine='openpyxl') as writer:
-                    df.to_excel(writer, sheet_name=sheet_name, index=False)
+            # حفظ الملف الفعلي
+            output.seek(0)
+            with open(self.file_path, 'wb') as f:
+                f.write(output.read())
             
             return True
         except Exception as e:
-            st.error(f"❌ خطأ في حفظ البيانات: {str(e)}")
+            st.error(f"❌ خطأ في حفظ الملف: {str(e)}")
             return False
     
-    def add_machine(self, machine_data):
-        """إضافة ماكينة جديدة"""
-        machines = self.load_sheet('الماكينات')
-        
-        # إنشاء معرف جديد
-        new_id = machines['id'].max() + 1 if not machines.empty and 'id' in machines.columns else 1
-        
-        # إضافة البيانات
-        machine_data['id'] = new_id
-        machine_data['تاريخ الإضافة'] = datetime.now().strftime('%Y-%m-%d %H:%M')
-        
-        new_df = pd.DataFrame([machine_data])
-        machines = pd.concat([machines, new_df], ignore_index=True)
-        
-        # حفظ
-        if self.save_sheet('الماكينات', machines):
-            return True, new_id
-        return False, None
+    def add_machine_simple(self, machine_data):
+        """إضافة ماكينة - طريقة بسيطة ومضمونة"""
+        try:
+            # تحميل البيانات الحالية
+            machines = self.load_sheet('الماكينات')
+            tasks = self.load_sheet('المهام')
+            logs = self.load_sheet('السجل')
+            
+            # إنشاء معرف جديد
+            if machines.empty or 'id' not in machines.columns:
+                new_id = 1
+            else:
+                new_id = int(machines['id'].max()) + 1 if not pd.isna(machines['id'].max()) else 1
+            
+            # إضافة البيانات
+            machine_data['id'] = new_id
+            machine_data['تاريخ الإضافة'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+            
+            new_row = pd.DataFrame([machine_data])
+            machines = pd.concat([machines, new_row], ignore_index=True)
+            
+            # حفظ جميع الأوراق
+            if self.save_all_sheets(machines, tasks, logs):
+                return True, new_id
+            return False, None
+            
+        except Exception as e:
+            st.error(f"❌ خطأ في إضافة الماكينة: {str(e)}")
+            return False, None
     
-    def add_task(self, task_data):
-        """إضافة مهمة صيانة جديدة"""
-        tasks = self.load_sheet('المهام')
-        
-        # إنشاء معرف جديد
-        new_id = tasks['id'].max() + 1 if not tasks.empty and 'id' in tasks.columns else 1
-        
-        # إضافة البيانات
-        task_data['id'] = new_id
-        task_data['تاريخ الإضافة'] = datetime.now().strftime('%Y-%m-%d %H:%M')
-        
-        new_df = pd.DataFrame([task_data])
-        tasks = pd.concat([tasks, new_df], ignore_index=True)
-        
-        # حفظ
-        if self.save_sheet('المهام', tasks):
-            return True, new_id
-        return False, None
+    def add_task_simple(self, task_data):
+        """إضافة مهمة - طريقة بسيطة"""
+        try:
+            # تحميل البيانات الحالية
+            machines = self.load_sheet('الماكينات')
+            tasks = self.load_sheet('المهام')
+            logs = self.load_sheet('السجل')
+            
+            # إنشاء معرف جديد
+            if tasks.empty or 'id' not in tasks.columns:
+                new_id = 1
+            else:
+                new_id = int(tasks['id'].max()) + 1 if not pd.isna(tasks['id'].max()) else 1
+            
+            # إضافة البيانات
+            task_data['id'] = new_id
+            task_data['تاريخ الإضافة'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+            
+            new_row = pd.DataFrame([task_data])
+            tasks = pd.concat([tasks, new_row], ignore_index=True)
+            
+            # حفظ جميع الأوراق
+            if self.save_all_sheets(machines, tasks, logs):
+                return True, new_id
+            return False, None
+            
+        except Exception as e:
+            st.error(f"❌ خطأ في إضافة المهمة: {str(e)}")
+            return False, None
     
-    def add_log(self, log_data):
-        """إضافة سجل صيانة"""
-        logs = self.load_sheet('السجل')
-        
-        # إنشاء معرف جديد
-        new_id = logs['id'].max() + 1 if not logs.empty and 'id' in logs.columns else 1
-        
-        # إضافة البيانات
-        log_data['id'] = new_id
-        log_data['تاريخ التسجيل'] = datetime.now().strftime('%Y-%m-%d %H:%M')
-        
-        new_df = pd.DataFrame([log_data])
-        logs = pd.concat([logs, new_df], ignore_index=True)
-        
-        # حفظ
-        if self.save_sheet('السجل', logs):
-            return True
-        return False
+    def add_log_simple(self, log_data):
+        """إضافة سجل - طريقة بسيطة"""
+        try:
+            # تحميل البيانات الحالية
+            machines = self.load_sheet('الماكينات')
+            tasks = self.load_sheet('المهام')
+            logs = self.load_sheet('السجل')
+            
+            # إنشاء معرف جديد
+            if logs.empty or 'id' not in logs.columns:
+                new_id = 1
+            else:
+                new_id = int(logs['id'].max()) + 1 if not pd.isna(logs['id'].max()) else 1
+            
+            # إضافة البيانات
+            log_data['id'] = new_id
+            log_data['تاريخ التسجيل'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+            
+            new_row = pd.DataFrame([log_data])
+            logs = pd.concat([logs, new_row], ignore_index=True)
+            
+            # حفظ جميع الأوراق
+            if self.save_all_sheets(machines, tasks, logs):
+                return True
+            return False
+            
+        except Exception as e:
+            st.error(f"❌ خطأ في إضافة السجل: {str(e)}")
+            return False
 
 # ===============================
-# ☁️ نظام رفع GitHub التلقائي
+# ☁️ نظام GitHub المبسط
 # ===============================
-class GitHubAutoUpload:
+class SimpleGitHub:
     def __init__(self):
         self.repo = APP_CONFIG["GITHUB_REPO"]
-        self.file_name = APP_CONFIG["GITHUB_FILE"]
-        self.local_file = APP_CONFIG["EXCEL_FILE"]
-        
-    def upload_to_github(self):
-        """رفع الملف إلى GitHub تلقائياً"""
+    
+    def upload_file(self, file_path):
+        """رفع ملف إلى GitHub باستخدام GitHub API البسيط"""
         try:
-            # قراءة الملف المحلي
-            with open(self.local_file, 'rb') as f:
+            # قراءة الملف
+            with open(file_path, 'rb') as f:
                 content = f.read()
             
-            # ترميز Base64
-            encoded_content = base64.b64encode(content).decode('utf-8')
+            # تحويل إلى base64
+            encoded = base64.b64encode(content).decode('utf-8')
             
-            # إنشاء رابط GitHub
-            github_url = f"https://api.github.com/repos/{self.repo}/contents/{self.file_name}"
+            # بناء رابط GitHub
+            url = f"https://api.github.com/repos/{self.repo}/contents/{os.path.basename(file_path)}"
             
-            # رفع الملف
-            commit_message = f"تحديث تلقائي - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            
-            # محاولة تحديث الملف الموجود
-            response = requests.get(github_url)
-            
+            # بيانات الرفع
             data = {
-                "message": commit_message,
-                "content": encoded_content,
+                "message": f"تحديث من تطبيق الصيانة - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                "content": encoded,
                 "branch": "main"
             }
             
-            # إذا الملف موجود، نضيف SHA للتحديث
-            if response.status_code == 200:
-                data["sha"] = response.json()["sha"]
+            # محاولة الحصول على SHA إذا الملف موجود
+            try:
+                response = requests.get(url)
+                if response.status_code == 200:
+                    data["sha"] = response.json()["sha"]
+            except:
+                pass
             
             # الرفع
-            headers = {
-                "Accept": "application/vnd.github.v3+json"
-            }
-            
-            response = requests.put(github_url, json=data, headers=headers)
+            response = requests.put(
+                url,
+                json=data,
+                headers={"Accept": "application/vnd.github.v3+json"}
+            )
             
             if response.status_code in [200, 201]:
-                return True, "✅ تم رفع الملف إلى GitHub بنجاح!"
+                return True, "✅ تم الرفع إلى GitHub بنجاح!"
             else:
-                return False, f"⚠️ تعذر الرفع: {response.status_code}"
+                return False, f"⚠️ لم يتم الرفع: {response.status_code}"
                 
         except Exception as e:
-            return False, f"❌ خطأ: {str(e)}"
-    
-    def download_from_github(self):
-        """تحميل الملف من GitHub"""
-        try:
-            github_url = f"https://raw.githubusercontent.com/{self.repo}/main/{self.file_name}"
-            response = requests.get(github_url)
-            
-            if response.status_code == 200:
-                with open(self.local_file, 'wb') as f:
-                    f.write(response.content)
-                return True, "✅ تم تحميل الملف من GitHub"
-            else:
-                return False, "⚠️ الملف غير موجود على GitHub"
-        except Exception as e:
-            return False, f"❌ خطأ: {str(e)}"
+            return False, f"❌ خطأ في الرفع: {str(e)}"
 
 # ===============================
 # 🔧 تهيئة الأنظمة
 # ===============================
 @st.cache_resource
-def init_excel_system():
-    return ExcelSystem()
+def init_database():
+    return SimpleExcelDB(APP_CONFIG["EXCEL_FILE"])
 
 @st.cache_resource
-def init_github_uploader():
-    return GitHubAutoUpload()
+def init_github():
+    return SimpleGitHub()
 
-# تهيئة الأنظمة
-excel_system = init_excel_system()
-github_uploader = init_github_uploader()
+# إنشاء الأنظمة
+db = init_database()
+github = init_github()
 
 # ===============================
 # 📊 دوال مساعدة
@@ -310,43 +326,13 @@ github_uploader = init_github_uploader()
 def calculate_remaining_hours(last_date_str, interval_hours):
     """حساب الساعات المتبقية"""
     try:
-        last_date = datetime.strptime(last_date_str, "%Y-%m-%d")
+        last_date = datetime.strptime(str(last_date_str), "%Y-%m-%d")
         current_date = datetime.now()
-        
-        # حساب الساعات المنقضية
         hours_passed = (current_date - last_date).total_seconds() / 3600
-        
-        # حساب المتبقي
         remaining = max(0, interval_hours - hours_passed)
         return remaining
     except:
         return interval_hours
-
-def update_all_tasks():
-    """تحديث جميع المهام"""
-    tasks = excel_system.load_sheet('المهام')
-    
-    if tasks.empty:
-        return tasks
-    
-    updated_tasks = tasks.copy()
-    
-    for idx, task in tasks.iterrows():
-        if 'تاريخ آخر صيانة' in task and 'الفترة بين الصيانة (ساعات)' in task:
-            remaining = calculate_remaining_hours(
-                str(task['تاريخ آخر صيانة']),
-                task['الفترة بين الصيانة (ساعات)']
-            )
-            updated_tasks.at[idx, 'عدد الساعات المتبقية'] = remaining
-            
-            # حساب التاريخ القادم
-            last_date = datetime.strptime(str(task['تاريخ آخر صيانة']), "%Y-%m-%d")
-            next_date = last_date + timedelta(hours=task['الفترة بين الصيانة (ساعات)'])
-            updated_tasks.at[idx, 'تاريخ الصيانة القادم'] = next_date.strftime("%Y-%m-%d")
-    
-    # حفظ التحديثات
-    excel_system.save_sheet('المهام', updated_tasks)
-    return updated_tasks
 
 # ===============================
 # 🎯 التطبيق الرئيسي
@@ -367,6 +353,8 @@ def main():
             if os.path.exists(APP_CONFIG["EXCEL_FILE"]):
                 file_size = os.path.getsize(APP_CONFIG["EXCEL_FILE"]) / 1024
                 st.success(f"📁 {file_size:.1f} KB")
+            else:
+                st.warning("📁 لا يوجد ملف")
         with col2:
             st.info("☁️ GitHub")
         
@@ -374,101 +362,95 @@ def main():
         
         # القائمة الرئيسية
         menu = st.radio(
-            "📋 القائمة الرئيسية",
+            "📋 اختر الصفحة:",
             [
-                "🏠 لوحة التحكم",
+                "🏠 الرئيسية",
                 "➕ إضافة ماكينة",
                 "🔧 إضافة مهمة",
                 "📝 تسجيل صيانة",
-                "📊 عرض البيانات",
-                "🔄 المزامنة"
+                "🔄 رفع لـGitHub"
             ]
         )
         
         st.markdown("---")
         
-        # إحصائيات سريعة
-        machines = excel_system.load_sheet('الماكينات')
-        tasks = excel_system.load_sheet('المهام')
-        logs = excel_system.load_sheet('السجل')
+        # تحميل البيانات لعرض الإحصائيات
+        machines = db.load_sheet('الماكينات')
+        tasks = db.load_sheet('المهام')
         
         st.markdown("**📊 الإحصائيات:**")
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("الماكينات", len(machines))
+            st.metric("الماكينات", len(machines) if not machines.empty else 0)
         with col2:
-            st.metric("المهام", len(tasks))
+            st.metric("المهام", len(tasks) if not tasks.empty else 0)
         
         st.markdown("---")
         
         # أزرار التحكم
-        if st.button("🔄 تحديث البيانات", use_container_width=True):
+        if st.button("🔄 تحديث التطبيق", use_container_width=True):
             st.cache_data.clear()
-            st.success("تم تحديث البيانات!")
+            st.success("تم التحديث!")
             time.sleep(1)
             st.rerun()
-        
-        if st.button("💾 حفظ محلي", use_container_width=True):
-            st.success(f"تم الحفظ في {APP_CONFIG['EXCEL_FILE']}")
-        
-        if st.button("☁️ رفع لـGitHub", use_container_width=True):
-            success, message = github_uploader.upload_to_github()
-            if success:
-                st.success(message)
-            else:
-                st.warning(message)
         
         st.markdown("---")
         st.caption(f"🕒 {datetime.now().strftime('%H:%M')}")
         st.caption(f"📁 {APP_CONFIG['EXCEL_FILE']}")
     
     # ===============================
-    # 🏠 صفحة لوحة التحكم
+    # 🏠 صفحة الرئيسية
     # ===============================
-    if menu == "🏠 لوحة التحكم":
-        st.markdown("## 📊 لوحة التحكم الرئيسية")
+    if menu == "🏠 الرئيسية":
+        st.markdown("## 🎯 نظام إدارة صيانة الماكينات")
         
-        # تحميل البيانات
-        machines = excel_system.load_sheet('الماكينات')
-        tasks = update_all_tasks()
+        # معلومات النظام
+        st.markdown("""
+        <div class="success-box">
+        <h3>✅ النظام يعمل بنجاح!</h3>
+        <p>يمكنك الآن:</p>
+        <ol>
+            <li><strong>إضافة ماكينة جديدة</strong> - من القائمة الجانبية</li>
+            <li><strong>إضافة مهام صيانة</strong> - لكل ماكينة</li>
+            <li><strong>تسجيل عمليات الصيانة</strong> - عند التنفيذ</li>
+            <li><strong>رفع البيانات لـGitHub</strong> - للحفظ على السحابة</li>
+        </ol>
+        </div>
+        """, unsafe_allow_html=True)
         
-        # عدادات
+        # عدادات سريعة
         col1, col2, col3 = st.columns(3)
         
         with col1:
             st.markdown('<div class="metric-card"><h3>🏭</h3><h4>الماكينات</h4><h2>{}</h2></div>'.format(
-                len(machines)
+                len(machines) if not machines.empty else 0
             ), unsafe_allow_html=True)
         
         with col2:
-            active_tasks = len(tasks[tasks['عدد الساعات المتبقية'] <= 0]) if not tasks.empty else 0
-            st.markdown('<div class="metric-card"><h3>⚠️</h3><h4>مستحقة</h4><h2>{}</h2></div>'.format(
-                active_tasks
+            st.markdown('<div class="metric-card"><h3>🔧</h3><h4>المهام</h4><h2>{}</h2></div>'.format(
+                len(tasks) if not tasks.empty else 0
             ), unsafe_allow_html=True)
         
         with col3:
-            recent_logs = len(logs) if 'logs' in locals() and not logs.empty else 0
+            logs = db.load_sheet('السجل')
             st.markdown('<div class="metric-card"><h3>📝</h3><h4>السجلات</h4><h2>{}</h2></div>'.format(
-                recent_logs
+                len(logs) if not logs.empty else 0
             ), unsafe_allow_html=True)
         
-        # الماكينات الأخيرة
-        st.markdown("### 🆕 أحدث الماكينات")
+        # تعليمات سريعة
+        st.markdown("### 🚀 كيفية البدء:")
         
-        if not machines.empty:
-            recent_machines = machines.tail(3)
-            
-            for idx, machine in recent_machines.iterrows():
-                st.markdown(f"""
-                <div class="machine-card">
-                    <h4>⚙️ {machine['اسم الماكينة']}</h4>
-                    <p><strong>الموديل:</strong> {machine.get('الموديل', 'غير محدد')}</p>
-                    <p><strong>الرقم التسلسلي:</strong> {machine.get('الرقم التسلسلي', 'غير محدد')}</p>
-                    <p><strong>تاريخ الإضافة:</strong> {machine.get('تاريخ الإضافة', 'غير محدد')}</p>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("📝 لا توجد ماكينات مسجلة. أضف أول ماكينة!")
+        steps = [
+            ("1️⃣", "اذهب إلى ➕ إضافة ماكينة", "أدخل بيانات الماكينة الأولى"),
+            ("2️⃣", "انتقل إلى 🔧 إضافة مهمة", "أضف مهام الصيانة للماكينة"),
+            ("3️⃣", "استخدم 📝 تسجيل صيانة", "سجل العمليات المنفذة"),
+            ("4️⃣", "اضغط 🔄 رفع لـGitHub", "احفظ البيانات على السحابة")
+        ]
+        
+        for icon, title, desc in steps:
+            st.markdown(f"**{icon} {title}**")
+            st.caption(desc)
+            st.markdown("---")
     
     # ===============================
     # ➕ صفحة إضافة ماكينة
@@ -477,6 +459,8 @@ def main():
         st.markdown("## ➕ إضافة ماكينة جديدة")
         
         with st.form("add_machine_form", clear_on_submit=True):
+            st.markdown("### 📝 بيانات الماكينة")
+            
             col1, col2 = st.columns(2)
             
             with col1:
@@ -486,11 +470,12 @@ def main():
             
             with col2:
                 install_date = st.date_input("تاريخ التركيب *", value=datetime.now())
-                total_hours = st.number_input("ساعات التشغيل الحالية *", min_value=0.0, value=0.0, step=10.0)
+                total_hours = st.number_input("ساعات التشغيل الحالية *", 
+                                            min_value=0.0, value=0.0, step=10.0)
                 is_active = st.radio("الحالة *", ["نعم", "لا"], index=0, horizontal=True)
             
             department = st.text_input("القسم/الموقع", placeholder="قسم الإنتاج - الخط 1")
-            notes = st.text_area("ملاحظات إضافية", placeholder="أي معلومات إضافية عن الماكينة...")
+            notes = st.text_area("ملاحظات إضافية")
             
             submitted = st.form_submit_button("💾 حفظ الماكينة")
             
@@ -511,38 +496,31 @@ def main():
                     }
                     
                     # إضافة الماكينة
-                    success, machine_id = excel_system.add_machine(machine_data)
-                    
-                    if success:
-                        st.success(f"✅ تمت إضافة الماكينة '{name}' بنجاح!")
-                        st.balloons()
+                    with st.spinner("جاري حفظ الماكينة..."):
+                        success, machine_id = db.add_machine_simple(machine_data)
                         
-                        # رفع تلقائي لـGitHub
-                        with st.spinner("جاري رفع الملف إلى GitHub..."):
-                            upload_success, upload_message = github_uploader.upload_to_github()
-                            if upload_success:
-                                st.success(upload_message)
-                            else:
-                                st.warning(upload_message)
-                        
-                        # عرض خيار إضافة مهام
-                        st.markdown("---")
-                        st.markdown("### 🔧 الخطوة التالية: إضافة مهام صيانة")
-                        
-                        if st.button(f"إضافة مهام صيانة لهذه الماكينة", key=f"add_tasks_{machine_id}"):
-                            st.session_state.add_tasks_for = machine_id
-                            st.rerun()
-                    else:
-                        st.error("❌ فشل في إضافة الماكينة")
+                        if success:
+                            st.success(f"✅ تمت إضافة الماكينة '{name}' بنجاح!")
+                            st.balloons()
+                            
+                            # عرض خيار إضافة مهام
+                            st.markdown("---")
+                            st.markdown("### 🔧 الخطوة التالية")
+                            
+                            if st.button(f"إضافة مهام صيانة لهذه الماكينة"):
+                                st.session_state.add_tasks_for = machine_id
+                                st.rerun()
+                        else:
+                            st.error("❌ فشل في إضافة الماكينة. حاول مرة أخرى.")
     
     # ===============================
     # 🔧 صفحة إضافة مهمة
     # ===============================
     elif menu == "🔧 إضافة مهمة":
-        st.markdown("## 🔧 إضافة مهمة صيانة جديدة")
+        st.markdown("## 🔧 إضافة مهمة صيانة")
         
         # تحميل الماكينات
-        machines = excel_system.load_sheet('الماكينات')
+        machines = db.load_sheet('الماكينات')
         
         if machines.empty:
             st.warning("⚠️ لا توجد ماكينات. أضف ماكينة أولاً!")
@@ -550,17 +528,30 @@ def main():
             # إذا كان هناك ماكينة محددة
             if 'add_tasks_for' in st.session_state:
                 selected_machine_id = st.session_state.add_tasks_for
-                machine_name = machines[machines['id'] == selected_machine_id]['اسم الماكينة'].iloc[0]
+                # البحث عن اسم الماكينة
+                machine_name = "غير معروف"
+                if not machines.empty and 'id' in machines.columns:
+                    machine_row = machines[machines['id'] == selected_machine_id]
+                    if not machine_row.empty:
+                        machine_name = machine_row.iloc[0]['اسم الماكينة']
                 st.success(f"إضافة مهام لـ: **{machine_name}**")
             else:
                 # اختيار الماكينة
-                machine_options = {row['id']: row['اسم الماكينة'] for idx, row in machines.iterrows()}
-                selected_machine_id = st.selectbox(
-                    "اختر الماكينة *",
-                    options=list(machine_options.keys()),
-                    format_func=lambda x: machine_options[x]
-                )
-                machine_name = machine_options[selected_machine_id]
+                machine_options = {}
+                for idx, row in machines.iterrows():
+                    if 'id' in row and 'اسم الماكينة' in row:
+                        machine_options[row['id']] = row['اسم الماكينة']
+                
+                if machine_options:
+                    selected_machine_id = st.selectbox(
+                        "اختر الماكينة *",
+                        options=list(machine_options.keys()),
+                        format_func=lambda x: machine_options[x]
+                    )
+                    machine_name = machine_options[selected_machine_id]
+                else:
+                    st.error("❌ لا توجد ماكينات صالحة")
+                    return
             
             with st.form("add_task_form", clear_on_submit=True):
                 st.markdown(f"### الماكينة: {machine_name}")
@@ -571,14 +562,20 @@ def main():
                     task_type = st.text_input("نوع الصيانة *", placeholder="تغيير الزيت")
                     
                     # أنواع شائعة
-                    common_tasks = ["", "تغيير الزيت", "التشحيم", "تنظيف الفلاتر", 
-                                  "فحص الكهرباء", "تنظيف عام", "فحص المحامل"]
-                    selected_common = st.selectbox("أو اختر من القائمة", options=common_tasks)
+                    common_tasks = ["تغيير الزيت", "التشحيم", "تنظيف الفلاتر", 
+                                  "فحص الكهرباء", "تنظيف عام", "فحص المحامل",
+                                  "تغيير الفلاتر", "فحص الأحزمة"]
+                    
+                    selected_common = st.selectbox(
+                        "أو اختر من القائمة",
+                        options=[""] + common_tasks
+                    )
                     
                     if selected_common:
                         task_type = selected_common
                     
-                    interval = st.number_input("الفترة بين الصيانة (ساعات) *", min_value=1, value=500, step=10)
+                    interval = st.number_input("الفترة بين الصيانة (ساعات) *", 
+                                             min_value=1, value=500, step=10)
                 
                 with col2:
                     last_date = st.date_input("تاريخ آخر صيانة *", value=datetime.now())
@@ -586,9 +583,9 @@ def main():
                     # الحصول على ساعات الماكينة
                     machine_hours = 0
                     if not machines.empty:
-                        machine_data = machines[machines['id'] == selected_machine_id]
-                        if not machine_data.empty:
-                            machine_hours = machine_data.iloc[0].get('إجمالي ساعات التشغيل', 0)
+                        machine_row = machines[machines['id'] == selected_machine_id]
+                        if not machine_row.empty and 'إجمالي ساعات التشغيل' in machine_row.columns:
+                            machine_hours = machine_row.iloc[0].get('إجمالي ساعات التشغيل', 0)
                     
                     last_hours = st.number_input(
                         "ساعات التشغيل عند آخر صيانة *",
@@ -597,7 +594,8 @@ def main():
                         step=1.0
                     )
                 
-                description = st.text_area("وصف المهمة", placeholder="تفاصيل عملية الصيانة...")
+                description = st.text_area("وصف المهمة", 
+                                         placeholder="تفاصيل عملية الصيانة...")
                 
                 submitted = st.form_submit_button("💾 حفظ المهمة")
                 
@@ -616,36 +614,34 @@ def main():
                         
                         # جمع بيانات المهمة
                         task_data = {
-                            'معرف الماكينة': selected_machine_id,
+                            'معرف الماكينة': int(selected_machine_id),
                             'نوع الصيانة': task_type,
-                            'الفترة بين الصيانة (ساعات)': interval,
+                            'الفترة بين الصيانة (ساعات)': int(interval),
                             'تاريخ آخر صيانة': last_date.strftime('%Y-%m-%d'),
-                            'عدد ساعات التشغيل عند آخر صيانة': last_hours,
-                            'عدد الساعات المتبقية': remaining,
+                            'عدد ساعات التشغيل عند آخر صيانة': float(last_hours),
+                            'عدد الساعات المتبقية': float(remaining),
                             'تاريخ الصيانة القادم': next_date.strftime('%Y-%m-%d'),
                             'وصف المهمة': description if description else "",
                             'نشطة': "نعم"
                         }
                         
                         # إضافة المهمة
-                        success, task_id = excel_system.add_task(task_data)
-                        
-                        if success:
-                            st.success(f"✅ تمت إضافة مهمة '{task_type}' بنجاح!")
+                        with st.spinner("جاري حفظ المهمة..."):
+                            success, task_id = db.add_task_simple(task_data)
                             
-                            # رفع تلقائي لـGitHub
-                            with st.spinner("جاري رفع التحديثات إلى GitHub..."):
-                                upload_success, upload_message = github_uploader.upload_to_github()
-                                if upload_success:
-                                    st.success(upload_message)
-                                else:
-                                    st.warning(upload_message)
-                            
-                            # إزالة الماكينة المحددة من الجلسة
-                            if 'add_tasks_for' in st.session_state:
-                                del st.session_state.add_tasks_for
-                        else:
-                            st.error("❌ فشل في إضافة المهمة")
+                            if success:
+                                st.success(f"✅ تمت إضافة مهمة '{task_type}' بنجاح!")
+                                
+                                # إزالة الماكينة المحددة من الجلسة
+                                if 'add_tasks_for' in st.session_state:
+                                    del st.session_state.add_tasks_for
+                                
+                                # عرض خيار إضافة المزيد
+                                if st.button("إضافة مهمة أخرى لنفس الماكينة"):
+                                    st.session_state.add_tasks_for = selected_machine_id
+                                    st.rerun()
+                            else:
+                                st.error("❌ فشل في إضافة المهمة")
     
     # ===============================
     # 📝 صفحة تسجيل صيانة
@@ -654,8 +650,8 @@ def main():
         st.markdown("## 📝 تسجيل عملية صيانة")
         
         # تحميل البيانات
-        machines = excel_system.load_sheet('الماكينات')
-        tasks = excel_system.load_sheet('المهام')
+        machines = db.load_sheet('الماكينات')
+        tasks = db.load_sheet('المهام')
         
         if machines.empty or tasks.empty:
             st.warning("⚠️ يجب إضافة ماكينات ومهام أولاً!")
@@ -665,25 +661,42 @@ def main():
                 
                 with col1:
                     # اختيار الماكينة
-                    machine_options = {row['id']: row['اسم الماكينة'] for idx, row in machines.iterrows()}
-                    machine_id = st.selectbox(
-                        "اختر الماكينة *",
-                        options=list(machine_options.keys()),
-                        format_func=lambda x: machine_options[x]
-                    )
+                    machine_options = {}
+                    for idx, row in machines.iterrows():
+                        if 'id' in row and 'اسم الماكينة' in row:
+                            machine_options[row['id']] = row['اسم الماكينة']
                     
-                    # اختيار المهمة لهذه الماكينة
-                    machine_tasks = tasks[tasks['معرف الماكينة'] == machine_id]
-                    
-                    if not machine_tasks.empty:
-                        task_options = {row['id']: row['نوع الصيانة'] for idx, row in machine_tasks.iterrows()}
-                        task_id = st.selectbox(
-                            "اختر نوع الصيانة *",
-                            options=list(task_options.keys()),
-                            format_func=lambda x: task_options[x]
+                    if machine_options:
+                        machine_id = st.selectbox(
+                            "اختر الماكينة *",
+                            options=list(machine_options.keys()),
+                            format_func=lambda x: machine_options[x]
                         )
+                        
+                        # اختيار المهمة لهذه الماكينة
+                        machine_tasks = tasks[tasks['معرف الماكينة'] == machine_id]
+                        
+                        if not machine_tasks.empty:
+                            task_options = {}
+                            for idx, row in machine_tasks.iterrows():
+                                if 'id' in row and 'نوع الصيانة' in row:
+                                    task_options[row['id']] = row['نوع الصيانة']
+                            
+                            if task_options:
+                                task_id = st.selectbox(
+                                    "اختر نوع الصيانة *",
+                                    options=list(task_options.keys()),
+                                    format_func=lambda x: task_options[x]
+                                )
+                            else:
+                                st.warning("لا توجد مهام مسجلة لهذه الماكينة")
+                                task_id = None
+                        else:
+                            st.warning("لا توجد مهام لهذه الماكينة")
+                            task_id = None
                     else:
-                        st.warning("لا توجد مهام لهذه الماكينة")
+                        st.error("❌ لا توجد ماكينات صالحة")
+                        machine_id = None
                         task_id = None
                 
                 with col2:
@@ -691,10 +704,10 @@ def main():
                     
                     # الحصول على ساعات الماكينة الحالية
                     current_hours = 0
-                    if not machines.empty:
-                        machine_data = machines[machines['id'] == machine_id]
-                        if not machine_data.empty:
-                            current_hours = machine_data.iloc[0].get('إجمالي ساعات التشغيل', 0)
+                    if machine_id and not machines.empty:
+                        machine_row = machines[machines['id'] == machine_id]
+                        if not machine_row.empty and 'إجمالي ساعات التشغيل' in machine_row.columns:
+                            current_hours = machine_row.iloc[0].get('إجمالي ساعات التشغيل', 0)
                     
                     maintenance_hours = st.number_input(
                         "عدد ساعات التشغيل *",
@@ -705,8 +718,10 @@ def main():
                     
                     technician = st.text_input("اسم الفني *", placeholder="أحمد محمد")
                 
-                parts_used = st.text_area("الأجزاء المستبدلة", placeholder="مثال: زيت محرك 5 لتر...")
-                notes = st.text_area("ملاحظات إضافية", placeholder="أي ملاحظات عن الصيانة...")
+                parts_used = st.text_area("الأجزاء المستبدلة", 
+                                        placeholder="مثال: زيت محرك 5 لتر، فلتر هواء...")
+                notes = st.text_area("ملاحظات إضافية", 
+                                   placeholder="أي ملاحظات عن الصيانة...")
                 
                 submitted = st.form_submit_button("📝 تسجيل الصيانة")
                 
@@ -716,152 +731,75 @@ def main():
                     else:
                         # تسجيل السجل
                         log_data = {
-                            'معرف الماكينة': machine_id,
-                            'معرف المهمة': task_id,
+                            'معرف الماكينة': int(machine_id),
+                            'معرف المهمة': int(task_id),
                             'تاريخ الصيانة': maintenance_date.strftime('%Y-%m-%d'),
-                            'عدد ساعات التشغيل': maintenance_hours,
+                            'عدد ساعات التشغيل': float(maintenance_hours),
                             'تمت بواسطة': technician,
                             'الأجزاء المستبدلة': parts_used if parts_used else "",
                             'ملاحظات': notes if notes else ""
                         }
                         
-                        if excel_system.add_log(log_data):
-                            st.success("✅ تم تسجيل الصيانة بنجاح!")
-                            st.balloons()
-                            
-                            # تحديث ساعات الماكينة
-                            if maintenance_hours > current_hours:
-                                machines.loc[machines['id'] == machine_id, 'إجمالي ساعات التشغيل'] = maintenance_hours
-                                excel_system.save_sheet('الماكينات', machines)
-                            
-                            # رفع تلقائي لـGitHub
-                            with st.spinner("جاري رفع التحديثات إلى GitHub..."):
-                                upload_success, upload_message = github_uploader.upload_to_github()
-                                if upload_success:
-                                    st.success(upload_message)
-                                else:
-                                    st.warning(upload_message)
-                        else:
-                            st.error("❌ فشل في تسجيل الصيانة")
+                        with st.spinner("جاري تسجيل الصيانة..."):
+                            if db.add_log_simple(log_data):
+                                st.success("✅ تم تسجيل الصيانة بنجاح!")
+                                st.balloons()
+                            else:
+                                st.error("❌ فشل في تسجيل الصيانة")
     
     # ===============================
-    # 📊 صفحة عرض البيانات
+    # 🔄 صفحة رفع لـGitHub
     # ===============================
-    elif menu == "📊 عرض البيانات":
-        st.markdown("## 📊 عرض جميع البيانات")
-        
-        tab1, tab2, tab3 = st.tabs(["الماكينات", "المهام", "سجل الصيانة"])
-        
-        with tab1:
-            machines = excel_system.load_sheet('الماكينات')
-            if not machines.empty:
-                st.dataframe(machines, use_container_width=True)
-            else:
-                st.info("📝 لا توجد ماكينات مسجلة")
-        
-        with tab2:
-            tasks = excel_system.load_sheet('المهام')
-            if not tasks.empty:
-                st.dataframe(tasks, use_container_width=True)
-            else:
-                st.info("📝 لا توجد مهام مسجلة")
-        
-        with tab3:
-            logs = excel_system.load_sheet('السجل')
-            if not logs.empty:
-                st.dataframe(logs, use_container_width=True)
-            else:
-                st.info("📝 لا توجد سجلات صيانة")
-    
-    # ===============================
-    # 🔄 صفحة المزامنة
-    # ===============================
-    elif menu == "🔄 المزامنة":
-        st.markdown("## 🔄 مزامنة البيانات مع GitHub")
+    elif menu == "🔄 رفع لـGitHub":
+        st.markdown("## 🔄 رفع البيانات إلى GitHub")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("### 📥 تحميل من GitHub")
-            st.write("استعادة البيانات من GitHub")
+            st.markdown("### 📤 رفع الملف")
+            st.write("سيتم رفع ملف Excel الحالي إلى GitHub")
             
-            if st.button("⬇️ تحميل الآن", use_container_width=True):
-                with st.spinner("جاري التحميل..."):
-                    success, message = github_uploader.download_from_github()
+            if st.button("☁️ رفع الآن إلى GitHub", use_container_width=True):
+                with st.spinner("جاري الرفع إلى GitHub..."):
+                    success, message = github.upload_file(APP_CONFIG["EXCEL_FILE"])
                     if success:
                         st.success(message)
-                        st.cache_data.clear()
-                        time.sleep(2)
-                        st.rerun()
+                        
+                        # رابط الملف على GitHub
+                        github_url = f"https://github.com/{APP_CONFIG['GITHUB_REPO']}/blob/main/{APP_CONFIG['EXCEL_FILE']}"
+                        st.markdown(f"[📎 عرض الملف على GitHub]({github_url})")
                     else:
-                        st.warning(message)
+                        st.error(message)
         
         with col2:
-            st.markdown("### 📤 رفع إلى GitHub")
-            st.write("حفظ البيانات الحالية على GitHub")
+            st.markdown("### 📊 معلومات الملف")
             
-            if st.button("☁️ رفع الآن", use_container_width=True):
-                with st.spinner("جاري الرفع..."):
-                    success, message = github_uploader.upload_to_github()
-                    if success:
-                        st.success(message)
-                    else:
-                        st.warning(message)
-        
-        # معلومات الملف
-        st.markdown("---")
-        st.markdown("### 📊 معلومات الملف")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
             if os.path.exists(APP_CONFIG["EXCEL_FILE"]):
                 file_size = os.path.getsize(APP_CONFIG["EXCEL_FILE"]) / 1024
-                st.metric("الحجم المحلي", f"{file_size:.1f} KB")
-        
-        with col2:
-            machines = excel_system.load_sheet('الماكينات')
-            st.metric("عدد الماكينات", len(machines))
-        
-        with col3:
-            tasks = excel_system.load_sheet('المهام')
-            st.metric("عدد المهام", len(tasks))
-        
-        # زر التحديث الكامل
-        if st.button("🔄 تحديث شامل", use_container_width=True):
-            st.cache_data.clear()
-            
-            # تحديث المهام
-            update_all_tasks()
-            
-            # رفع إلى GitHub
-            success, message = github_uploader.upload_to_github()
-            
-            if success:
-                st.success("✅ تم التحديث الشامل بنجاح!")
+                mod_time = datetime.fromtimestamp(os.path.getmtime(APP_CONFIG["EXCEL_FILE"])).strftime("%Y-%m-%d %H:%M")
+                
+                st.metric("الحجم", f"{file_size:.1f} KB")
+                st.metric("آخر تعديل", mod_time)
+                
+                # تحميل بيانات لعرض الإحصائيات
+                machines = db.load_sheet('الماكينات')
+                tasks = db.load_sheet('المهام')
+                logs = db.load_sheet('السجل')
+                
+                st.metric("الماكينات", len(machines))
+                st.metric("المهام", len(tasks))
+                st.metric("السجلات", len(logs))
             else:
-                st.warning(f"⚠️ {message}")
-            
-            time.sleep(2)
-            st.rerun()
-    
-    # ===============================
-    # 📌 تذييل الصفحة
-    # ===============================
-    st.markdown("---")
-    
-    footer_cols = st.columns(3)
-    
-    with footer_cols[0]:
-        st.caption(f"📁 الملف: {APP_CONFIG['EXCEL_FILE']}")
-    
-    with footer_cols[1]:
-        st.caption(f"☁️ GitHub: {APP_CONFIG['GITHUB_REPO']}")
-    
-    with footer_cols[2]:
-        if os.path.exists(APP_CONFIG["EXCEL_FILE"]):
-            mod_time = datetime.fromtimestamp(os.path.getmtime(APP_CONFIG["EXCEL_FILE"])).strftime("%H:%M")
-            st.caption(f"🕒 آخر تحديث: {mod_time}")
+                st.warning("الملف غير موجود")
+        
+        # رابط مباشر للتحميل
+        st.markdown("---")
+        st.markdown("### 🔗 رابط الملف على GitHub:")
+        
+        github_raw_url = f"https://raw.githubusercontent.com/{APP_CONFIG['GITHUB_REPO']}/main/{APP_CONFIG['EXCEL_FILE']}"
+        st.code(github_raw_url, language="text")
+        
+        st.markdown(f"[⬇️ تحميل الملف مباشرة]({github_raw_url})")
 
 # تشغيل التطبيق
 if __name__ == "__main__":
