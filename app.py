@@ -1,142 +1,152 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from github import Github
 import io
-import json
+from github import Github
 
-# ---------------- CONFIG ----------------
-EXCEL_PATH = "data/maintenance_db.xlsx"
+# ================== CONFIG ==================
+EXCEL_PATH = "data/machines.xlsx"
 
-# ---------------- LOAD DATA ----------------
+st.set_page_config(page_title="Maintenance System", layout="wide")
+
+# ================== LOAD DATA ==================
 @st.cache_data
-def load_data():
+def load_excel():
     xls = pd.ExcelFile(EXCEL_PATH)
     return {
-        "machines": pd.read_excel(xls, "Machines"),
-        "maint_types": pd.read_excel(xls, "Maintenance_Types"),
-        "map": pd.read_excel(xls, "Machine_Maint_Map"),
-        "log": pd.read_excel(xls, "Maintenance_Log")
+        "machines": pd.read_excel(xls, "الماكينات"),
+        "tasks": pd.read_excel(xls, "المهام"),
+        "logs": pd.read_excel(xls, "السجل"),
+        "settings": pd.read_excel(xls, "الإعدادات")
     }
 
-data = load_data()
+data = load_excel()
 
-# ---------------- AUTH ----------------
-with open("users.json") as f:
-    USERS = json.load(f)
+# ================== SAVE & SYNC ==================
+def save_and_push(dfs):
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        dfs["machines"].to_excel(writer, sheet_name="الماكينات", index=False)
+        dfs["tasks"].to_excel(writer, sheet_name="المهام", index=False)
+        dfs["logs"].to_excel(writer, sheet_name="السجل", index=False)
+        dfs["settings"].to_excel(writer, sheet_name="الإعدادات", index=False)
 
-if "user" not in st.session_state:
-    st.session_state.user = None
-
-if not st.session_state.user:
-    st.title("🔐 Login")
-    u = st.text_input("Username")
-    p = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if u in USERS and USERS[u]["password"] == p:
-            st.session_state.user = USERS[u]
-            st.rerun()
-        else:
-            st.error("Invalid login")
-    st.stop()
-
-role = st.session_state.user["role"]
-
-# ---------------- FUNCTIONS ----------------
-def push_to_github(file_bytes):
     g = Github(st.secrets["github"]["token"])
     repo = g.get_repo(st.secrets["github"]["repo"])
     file = repo.get_contents(EXCEL_PATH, ref="main")
 
     repo.update_file(
-        file.path,
-        "Update maintenance database",
-        file_bytes,
-        file.sha,
+        path=file.path,
+        message="Auto update maintenance data",
+        content=buffer.getvalue(),
+        sha=file.sha,
         branch="main"
     )
 
-def save_excel_and_sync(dfs):
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        dfs["machines"].to_excel(writer, "Machines", index=False)
-        dfs["maint_types"].to_excel(writer, "Maintenance_Types", index=False)
-        dfs["map"].to_excel(writer, "Machine_Maint_Map", index=False)
-        dfs["log"].to_excel(writer, "Maintenance_Log", index=False)
+# ================== HEADER ==================
+st.title("🛠️ نظام إدارة الصيانة")
 
-    push_to_github(buffer.getvalue())
+# ================== DASHBOARD ==================
+st.subheader("📊 Dashboard")
 
-# ---------------- UI ----------------
-st.title("🛠 Maintenance Management System")
+col1, col2, col3 = st.columns(3)
 
-tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "🔍 Machine View", "➕ Add Maintenance"])
+total_machines = data["machines"].shape[0]
+active_tasks = data["tasks"][data["tasks"]["نشطة"] == "نعم"].shape[0]
 
-# -------- Dashboard --------
-with tab1:
-    today = datetime.today()
-    alerts = []
+overdue = data["tasks"][data["tasks"]["عدد الساعات المتبقية"] <= 0].shape[0]
 
-    for _, row in data["log"].iterrows():
-        maint = data["maint_types"][data["maint_types"]["maint_id"] == row["maint_id"]].iloc[0]
-        days_passed = (today - pd.to_datetime(row["last_maint_date"])).days
-        remaining = maint["interval_days"] - days_passed
+col1.metric("عدد الماكينات", total_machines)
+col2.metric("الصيانات النشطة", active_tasks)
+col3.metric("صيانات متأخرة", overdue)
 
-        if remaining <= 0:
-            alerts.append(row["machine_id"])
+st.divider()
 
-    st.metric("Total Machines", len(data["machines"]))
-    st.metric("Overdue Maintenance", len(set(alerts)))
+# ================== MACHINE VIEW ==================
+st.subheader("🔍 عرض ماكينة")
 
-# -------- Machine View --------
-with tab2:
-    machine = st.selectbox("Select Machine", data["machines"]["machine_name"])
-    mid = data["machines"][data["machines"]["machine_name"] == machine]["machine_id"].iloc[0]
+machine_name = st.selectbox(
+    "اختر الماكينة",
+    data["machines"]["اسم الماكينة"]
+)
 
-    rows = data["map"][data["map"]["machine_id"] == mid]
+machine = data["machines"][data["machines"]["اسم الماكينة"] == machine_name].iloc[0]
+machine_id = machine["id"]
 
-    result = []
-    for _, r in rows.iterrows():
-        maint = data["maint_types"][data["maint_types"]["maint_id"] == r["maint_id"]].iloc[0]
-        logs = data["log"][(data["log"]["machine_id"] == mid) & (data["log"]["maint_id"] == r["maint_id"])]
+st.info(f"""
+**الموديل:** {machine['الموديل']}  
+**الرقم التسلسلي:** {machine['الرقم التسلسلي']}  
+**إجمالي ساعات التشغيل:** {machine['إجمالي ساعات التشغيل']}
+""")
 
-        if not logs.empty:
-            last = logs.sort_values("last_maint_date").iloc[-1]
-            days_left = maint["interval_days"] - (datetime.today() - pd.to_datetime(last["last_maint_date"])).days
-            count = logs.shape[0]
-        else:
-            days_left = maint["interval_days"]
-            count = 0
+tasks = data["tasks"][
+    (data["tasks"]["معرف الماكينة"] == machine_id) &
+    (data["tasks"]["نشطة"] == "نعم")
+]
 
-        result.append({
-            "Maintenance": maint["maint_name"],
-            "Remaining Days": days_left,
-            "Times Done": count
-        })
+result = []
 
-    st.dataframe(pd.DataFrame(result))
+for _, task in tasks.iterrows():
+    count = data["logs"][
+        (data["logs"]["معرف الماكينة"] == machine_id) &
+        (data["logs"]["معرف المهمة"] == task["id"])
+    ].shape[0]
 
-# -------- Add Maintenance --------
-with tab3:
-    if role != "viewer":
-        m_id = st.selectbox("Machine ID", data["machines"]["machine_id"])
-        mt_id = st.selectbox("Maintenance Type", data["maint_types"]["maint_id"])
-        mat = st.text_input("Material Used")
-        hrs = st.number_input("Run Hours", 0)
-        tech = st.text_input("Technician")
+    status = "🟢 تمام"
+    if task["عدد الساعات المتبقية"] <= 0:
+        status = "🔴 متأخرة"
+    elif task["عدد الساعات المتبقية"] <= 50:
+        status = "🟠 قربت"
 
-        if st.button("Save"):
-            new = {
-                "log_id": data["log"].shape[0] + 1,
-                "machine_id": m_id,
-                "maint_id": mt_id,
-                "material_used": mat,
-                "run_hours": hrs,
-                "last_maint_date": datetime.today().strftime("%Y-%m-%d"),
-                "technician": tech
-            }
+    result.append({
+        "نوع الصيانة": task["نوع الصيانة"],
+        "آخر صيانة": task["تاريخ آخر صيانة"],
+        "الساعات المتبقية": task["عدد الساعات المتبقية"],
+        "عدد مرات التنفيذ": count,
+        "الحالة": status
+    })
 
-            data["log"] = pd.concat([data["log"], pd.DataFrame([new])])
-            save_excel_and_sync(data)
-            st.success("Saved & Synced with GitHub ✅")
-    else:
-        st.warning("Read only access")
+st.dataframe(pd.DataFrame(result), use_container_width=True)
+
+# ================== ADD MAINTENANCE ==================
+st.divider()
+st.subheader("➕ تسجيل صيانة جديدة")
+
+with st.form("add_maintenance"):
+    task_id = st.selectbox(
+        "اختر نوع الصيانة",
+        tasks["id"],
+        format_func=lambda x: tasks[tasks["id"] == x]["نوع الصيانة"].values[0]
+    )
+
+    run_hours = st.number_input("عدد ساعات التشغيل الحالية", min_value=0)
+    tech = st.text_input("تمت بواسطة")
+    parts = st.text_input("الأجزاء المستبدلة")
+    notes = st.text_area("ملاحظات")
+
+    submit = st.form_submit_button("💾 حفظ")
+
+    if submit:
+        new_log = {
+            "id": data["logs"].shape[0] + 1,
+            "معرف الماكينة": machine_id,
+            "معرف المهمة": task_id,
+            "تاريخ الصيانة": datetime.now().strftime("%Y-%m-%d"),
+            "عدد ساعات التشغيل": run_hours,
+            "تمت بواسطة": tech,
+            "الأجزاء المستبدلة": parts,
+            "ملاحظات": notes,
+            "تاريخ التسجيل": datetime.now().strftime("%Y-%m-%d")
+        }
+
+        data["logs"] = pd.concat([data["logs"], pd.DataFrame([new_log])])
+
+        idx = data["tasks"][data["tasks"]["id"] == task_id].index[0]
+        interval = data["tasks"].loc[idx, "الفترة بين الصيانة (ساعات)"]
+
+        data["tasks"].loc[idx, "تاريخ آخر صيانة"] = datetime.now().strftime("%Y-%m-%d")
+        data["tasks"].loc[idx, "عدد ساعات التشغيل عند آخر صيانة"] = run_hours
+        data["tasks"].loc[idx, "عدد الساعات المتبقية"] = interval
+
+        save_and_push(data)
+        st.success("✅ تم تسجيل الصيانة وتحديث GitHub")
