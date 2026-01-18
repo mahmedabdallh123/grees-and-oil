@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
+from git_utils import git_commit_push
 
 # ---------------- CONFIG ----------------
 st.set_page_config(
@@ -33,6 +34,7 @@ def save_excel(machines, types, logs):
         types.to_excel(writer, sheet_name="Maintenance_Types", index=False)
         logs.to_excel(writer, sheet_name="Maintenance_Log", index=False)
 
+    git_commit_push("Update maintenance data")
     st.cache_data.clear()
 
 
@@ -41,10 +43,10 @@ st.title("🛠️ Maintenance Management System")
 
 machines, types, logs = load_excel()
 
-# ---------------- DETECT COLUMNS ----------------
-machine_col = machines.columns[0]        # اسم الماكينة
-dept_col = machines.columns[1]           # القسم
-maint_col = types.columns[1]             # نوع الصيانة
+# Detect columns dynamically
+machine_col = machines.columns[0]
+dept_col = machines.columns[1]
+maint_col = types.columns[1]
 
 # ---------------- SIDEBAR ----------------
 page = st.sidebar.radio(
@@ -57,7 +59,6 @@ if page == "إضافة صيانة":
     st.subheader("➕ تسجيل صيانة جديدة")
 
     with st.form("maintenance_form"):
-
         machine_name = st.selectbox(
             "اسم الماكينة",
             machines[machine_col].unique()
@@ -98,14 +99,14 @@ if page == "إضافة صيانة":
 
         save_excel(machines, types, logs)
 
-        st.success("✅ تم تسجيل الصيانة بنجاح")
+        st.success("✅ تم تسجيل الصيانة ورفعها على GitHub")
 
-# ---------------- MACHINES VIEW ----------------
+# ---------------- MACHINES ----------------
 elif page == "عرض الماكينات":
     st.subheader("📋 الماكينات")
     st.dataframe(machines, use_container_width=True)
 
-# ---------------- LOGS VIEW ----------------
+# ---------------- LOGS ----------------
 elif page == "سجل الصيانة":
     st.subheader("🗒️ سجل الصيانة")
 
@@ -117,4 +118,4 @@ elif page == "سجل الصيانة":
 
 # ---------------- FOOTER ----------------
 st.markdown("---")
-st.caption("Maintenance System | Streamlit + Excel | Portfolio Ready")
+st.caption("Excel + Streamlit + GitHub | Real Maintenance System")
