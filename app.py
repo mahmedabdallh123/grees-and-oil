@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
-import os
+from datetime import datetime
 from io import BytesIO
-import matplotlib.pyplot as plt
+import os
 
 # إعداد الصفحة
 st.set_page_config(
@@ -85,81 +84,6 @@ def calculate_countdowns(df):
     
     return df
 
-# دالة للتحميل من GitHub
-def load_from_github():
-    try:
-        github_token = st.secrets.get("GITHUB_TOKEN", "")
-        
-        if not github_token:
-            st.warning("لم يتم تكوين GitHub Token. يرجى إضافته في إعدادات Streamlit Secrets.")
-            return None
-        
-        from github import Github, Auth
-        
-        auth = Auth.Token(github_token)
-        g = Github(auth=auth)
-        
-        repo_name = st.secrets.get("GITHUB_REPO", "your-username/your-repo-name")
-        repo = g.get_repo(repo_name)
-        
-        file_content = repo.get_contents("machines_data.xlsx")
-        
-        with open('machines_data.xlsx', 'wb') as f:
-            f.write(file_content.decoded_content)
-        
-        st.success("✅ تم تحميل البيانات من GitHub بنجاح!")
-        return load_data()
-    except ImportError:
-        st.error("مكتبة PyGithub غير مثبتة. يرجى تثبيتها باستخدام: pip install pygithub")
-        return None
-    except Exception as e:
-        st.error(f"خطأ في تحميل البيانات من GitHub: {str(e)}")
-        return None
-
-# دالة للرفع إلى GitHub
-def push_to_github():
-    try:
-        github_token = st.secrets.get("GITHUB_TOKEN", "")
-        
-        if not github_token:
-            st.warning("لم يتم تكوين GitHub Token. يرجى إضافته في إعدادات Streamlit Secrets.")
-            return False
-        
-        from github import Github, Auth
-        
-        auth = Auth.Token(github_token)
-        g = Github(auth=auth)
-        
-        repo_name = st.secrets.get("GITHUB_REPO", "your-username/your-repo-name")
-        repo = g.get_repo(repo_name)
-        
-        with open('machines_data.xlsx', 'rb') as f:
-            content = f.read()
-        
-        try:
-            file = repo.get_contents("machines_data.xlsx")
-            repo.update_file(
-                path="machines_data.xlsx",
-                message="تحديث بيانات الماكينات - " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                content=content,
-                sha=file.sha
-            )
-        except:
-            repo.create_file(
-                path="machines_data.xlsx",
-                message="إنشاء ملف بيانات الماكينات - " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                content=content
-            )
-        
-        st.success("✅ تم رفع البيانات إلى GitHub بنجاح!")
-        return True
-    except ImportError:
-        st.error("مكتبة PyGithub غير مثبتة. يرجى تثبيتها باستخدام: pip install pygithub")
-        return False
-    except Exception as e:
-        st.error(f"خطأ في رفع البيانات إلى GitHub: {str(e)}")
-        return False
-
 # تحميل البيانات
 machines_df = load_data()
 if not machines_df.empty:
@@ -169,48 +93,27 @@ if not machines_df.empty:
 with st.sidebar:
     st.header("🛠️ التحكم في النظام")
     
-    # قسم التحميل والرفع
-    st.subheader("التكامل مع GitHub")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📥 تحميل من GitHub"):
-            with st.spinner("جاري تحميل البيانات..."):
-                new_df = load_from_github()
-                if new_df is not None:
-                    machines_df = new_df
-                    st.session_state.machines_df = machines_df
-                    st.rerun()
-    
-    with col2:
-        if st.button("📤 رفع إلى GitHub"):
-            with st.spinner("جاري رفع البيانات..."):
-                if save_data(machines_df):
-                    push_to_github()
-    
-    st.markdown("---")
-    
     # قسم إضافة ماكينة جديدة
     st.subheader("إضافة ماكينة جديدة")
     
     with st.form("add_machine_form"):
-        machine_name = st.text_input("اسم الماكينة")
-        machine_type = st.selectbox("نوع الماكينة", ["معدات ثقيلة", "معدات خفيفة", "مولدات", "أخرى"])
+        machine_name = st.text_input("اسم الماكينة", key="machine_name")
+        machine_type = st.selectbox("نوع الماكينة", ["معدات ثقيلة", "معدات خفيفة", "مولدات", "أخرى"], key="machine_type")
         
         col1, col2 = st.columns(2)
         with col1:
-            installation_date = st.date_input("تاريخ التركيب", datetime.now())
-            total_hours = st.number_input("إجمالي ساعات التشغيل", min_value=0.0, value=0.0, step=10.0)
+            installation_date = st.date_input("تاريخ التركيب", datetime.now(), key="installation_date")
+            total_hours = st.number_input("إجمالي ساعات التشغيل", min_value=0.0, value=0.0, step=10.0, key="total_hours")
         
         with col2:
-            last_maintenance_date = st.date_input("تاريخ آخر صيانة", datetime.now())
+            last_maintenance_date = st.date_input("تاريخ آخر صيانة", datetime.now(), key="last_maintenance_date")
             last_maintenance_hours = st.number_input("ساعات التشغيل عند آخر صيانة", 
-                                                    min_value=0.0, value=0.0, step=10.0)
+                                                    min_value=0.0, value=0.0, step=10.0, key="last_maintenance_hours")
         
         st.subheader("فترات الصيانة (بالساعات)")
-        oil_interval = st.number_input("فترة تغيير الزيت", min_value=1, value=1000, step=50)
-        greasing_interval = st.number_input("فترة التشحيم", min_value=1, value=500, step=50)
-        other_interval = st.number_input("فترة الصيانة الأخرى", min_value=1, value=2000, step=100)
+        oil_interval = st.number_input("فترة تغيير الزيت", min_value=1, value=1000, step=50, key="oil_interval")
+        greasing_interval = st.number_input("فترة التشحيم", min_value=1, value=500, step=50, key="greasing_interval")
+        other_interval = st.number_input("فترة الصيانة الأخرى", min_value=1, value=2000, step=100, key="other_interval")
         
         submit_machine = st.form_submit_button("إضافة الماكينة")
         
@@ -241,17 +144,55 @@ with st.sidebar:
             machines_df = pd.concat([machines_df, pd.DataFrame([new_machine])], ignore_index=True)
             save_data(machines_df)
             st.session_state.changes_made = True
-            st.success(f"تمت إضافة الماكينة '{machine_name}' بنجاح!")
+            st.session_state.machines_df = machines_df
+            st.success(f"✅ تمت إضافة الماكينة '{machine_name}' بنجاح!")
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # قسم التحميل اليدوي لملف Excel
+    st.subheader("تحميل ملف Excel")
+    
+    uploaded_file = st.file_uploader("اختر ملف Excel", type=['xlsx', 'xls'], key="excel_uploader")
+    
+    if uploaded_file is not None:
+        try:
+            new_df = pd.read_excel(uploaded_file, engine='openpyxl')
+            if not new_df.empty:
+                save_data(new_df)
+                st.session_state.machines_df = new_df
+                st.success("✅ تم تحميل الملف بنجاح!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"❌ خطأ في تحميل الملف: {str(e)}")
+    
+    st.markdown("---")
+    
+    # خيارات إضافية
+    if st.button("🔄 تحديث البيانات"):
+        machines_df = load_data()
+        if not machines_df.empty:
+            machines_df = calculate_countdowns(machines_df)
+        st.session_state.machines_df = machines_df
+        st.success("✅ تم تحديث البيانات!")
+        st.rerun()
+    
+    if st.button("🗑️ مسح جميع البيانات"):
+        if st.checkbox("تأكيد حذف جميع البيانات"):
+            empty_df = pd.DataFrame(columns=machines_df.columns)
+            save_data(empty_df)
+            st.session_state.machines_df = empty_df
+            st.warning("✅ تم مسح جميع البيانات!")
             st.rerun()
 
 # علامات التبويب الرئيسية
-tab1, tab2, tab3, tab4 = st.tabs(["📊 لوحة التحكم", "📋 قائمة الماكينات", "🔄 تسجيل صيانة", "📈 التقارير"])
+tab1, tab2, tab3 = st.tabs(["📊 لوحة التحكم", "📋 قائمة الماكينات", "🔄 تسجيل صيانة"])
 
 with tab1:
     st.header("لوحة التحكم الرئيسية")
     
     if machines_df.empty:
-        st.info("لا توجد ماكينات مضافة حتى الآن. استخدم الشريط الجانبي لإضافة ماكينة جديدة.")
+        st.info("📝 لا توجد ماكينات مضافة حتى الآن. استخدم الشريط الجانبي لإضافة ماكينة جديدة.")
     else:
         # إحصائيات سريعة
         col1, col2, col3, col4 = st.columns(4)
@@ -261,15 +202,15 @@ with tab1:
         
         with col2:
             need_maintenance = len(machines_df[machines_df['overall_status'].str.contains('⚠️')]) if 'overall_status' in machines_df.columns else 0
-            st.metric("الماكينات التي تحتاج صيانة", need_maintenance, delta_color="inverse")
+            st.metric("تحتاج صيانة", need_maintenance)
         
         with col3:
             total_hours = machines_df['total_hours'].sum() if 'total_hours' in machines_df.columns else 0
-            st.metric("إجمالي ساعات التشغيل", f"{total_hours:,.0f}")
+            st.metric("إجمالي الساعات", f"{total_hours:,.0f}")
         
         with col4:
             avg_hours = machines_df['total_hours'].mean() if 'total_hours' in machines_df.columns else 0
-            st.metric("متوسط ساعات التشغيل", f"{avg_hours:,.0f}")
+            st.metric("متوسط الساعات", f"{avg_hours:,.0f}")
         
         st.markdown("---")
         
@@ -300,101 +241,223 @@ with tab1:
                 )
             else:
                 st.success("🎉 لا توجد ماكينات تحتاج صيانة عاجلة حالياً.")
+        
+        st.markdown("---")
+        
+        # نظرة عامة على جميع الماكينات
+        st.subheader("📋 نظرة عامة على الماكينات")
+        
+        if 'overall_status' in machines_df.columns:
+            status_counts = machines_df['overall_status'].value_counts()
+            
+            # عرض الإحصائيات في أعمدة
+            cols = st.columns(len(status_counts))
+            for idx, (status, count) in enumerate(status_counts.items()):
+                with cols[idx]:
+                    st.metric(status, count)
+            
+            # عرض تفاصيل الحالة
+            for status in ['⚠️ يحتاج صيانة', '🟡 قريب', '🟢 جيد']:
+                if status in status_counts:
+                    with st.expander(f"{status} ({status_counts[status]})"):
+                        status_machines = machines_df[machines_df['overall_status'] == status]
+                        if not status_machines.empty:
+                            st.dataframe(
+                                status_machines[['machine_name', 'machine_type', 'total_hours']].rename(columns={
+                                    'machine_name': 'اسم الماكينة',
+                                    'machine_type': 'النوع',
+                                    'total_hours': 'ساعات التشغيل'
+                                }),
+                                use_container_width=True
+                            )
 
 with tab2:
     st.header("قائمة جميع الماكينات")
     
     if machines_df.empty:
-        st.info("لا توجد ماكينات مضافة حتى الآن.")
+        st.info("📝 لا توجد ماكينات مضافة حتى الآن.")
     else:
-        # عرض جميع الماكينات مع إمكانية التصفية
-        search_term = st.text_input("🔍 بحث عن ماكينة", "")
+        # خيارات البحث والتصفية
+        col1, col2 = st.columns(2)
         
-        # تصفية البيانات إذا كان هناك بحث
+        with col1:
+            search_term = st.text_input("🔍 بحث عن ماكينة", "", key="search_tab2")
+        
+        with col2:
+            filter_type = st.selectbox("تصفية حسب النوع", ["الكل"] + list(machines_df['machine_type'].unique()), key="filter_type")
+        
+        # تصفية البيانات
         display_df = machines_df.copy()
+        
         if search_term:
             mask = display_df.apply(lambda row: row.astype(str).str.contains(search_term, case=False).any(), axis=1)
             display_df = display_df[mask]
         
-        # تحديد الأعمدة للعرض
-        display_columns = [
-            'machine_id', 'machine_name', 'machine_type', 'installation_date',
-            'total_hours', 'last_maintenance_date', 'greasing_status',
-            'oil_change_status', 'other_maintenance_status', 'overall_status'
-        ]
+        if filter_type != "الكل":
+            display_df = display_df[display_df['machine_type'] == filter_type]
         
-        # عرض البيانات
-        st.dataframe(
-            display_df[[col for col in display_columns if col in display_df.columns]].rename(columns={
+        # خيارات العرض
+        show_details = st.checkbox("عرض التفاصيل الكاملة", value=False)
+        
+        if show_details:
+            display_columns = [
+                'machine_id', 'machine_name', 'machine_type', 'installation_date',
+                'total_hours', 'last_maintenance_date', 'last_maintenance_hours',
+                'oil_change_interval', 'greasing_interval', 'other_maintenance_interval',
+                'next_oil_change_hours', 'next_greasing_hours', 'next_other_maintenance_hours',
+                'greasing_countdown', 'oil_change_countdown', 'other_maintenance_countdown',
+                'greasing_status', 'oil_change_status', 'other_maintenance_status', 'overall_status'
+            ]
+            
+            column_names = {
                 'machine_id': 'رقم الماكينة',
                 'machine_name': 'اسم الماكينة',
                 'machine_type': 'النوع',
                 'installation_date': 'تاريخ التركيب',
                 'total_hours': 'ساعات التشغيل',
                 'last_maintenance_date': 'تاريخ آخر صيانة',
+                'last_maintenance_hours': 'ساعات آخر صيانة',
+                'oil_change_interval': 'فترة تغيير الزيت',
+                'greasing_interval': 'فترة التشحيم',
+                'other_maintenance_interval': 'فترة الصيانة الأخرى',
+                'next_oil_change_hours': 'الهدف تغيير الزيت',
+                'next_greasing_hours': 'الهدف التشحيم',
+                'next_other_maintenance_hours': 'الهدف صيانة أخرى',
+                'greasing_countdown': 'متبقي للتشحيم',
+                'oil_change_countdown': 'متبقي لتغيير الزيت',
+                'other_maintenance_countdown': 'متبقي للصيانة الأخرى',
                 'greasing_status': 'حالة التشحيم',
                 'oil_change_status': 'حالة تغيير الزيت',
                 'other_maintenance_status': 'حالة الصيانة الأخرى',
                 'overall_status': 'الحالة العامة'
-            }),
+            }
+        else:
+            display_columns = [
+                'machine_id', 'machine_name', 'machine_type', 'total_hours',
+                'last_maintenance_date', 'greasing_status',
+                'oil_change_status', 'other_maintenance_status', 'overall_status'
+            ]
+            
+            column_names = {
+                'machine_id': 'رقم الماكينة',
+                'machine_name': 'اسم الماكينة',
+                'machine_type': 'النوع',
+                'total_hours': 'ساعات التشغيل',
+                'last_maintenance_date': 'تاريخ آخر صيانة',
+                'greasing_status': 'حالة التشحيم',
+                'oil_change_status': 'حالة تغيير الزيت',
+                'other_maintenance_status': 'حالة الصيانة الأخرى',
+                'overall_status': 'الحالة العامة'
+            }
+        
+        # عرض البيانات
+        st.dataframe(
+            display_df[[col for col in display_columns if col in display_df.columns]].rename(columns=column_names),
             use_container_width=True,
             height=400
         )
         
+        # إحصائيات سريعة
+        st.markdown("---")
+        st.subheader("📊 إحصائيات سريعة")
+        
+        if not display_df.empty:
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("عدد الماكينات المعروضة", len(display_df))
+            
+            with col2:
+                avg_hours = display_df['total_hours'].mean()
+                st.metric("متوسط ساعات التشغيل", f"{avg_hours:,.0f}")
+            
+            with col3:
+                total_hours = display_df['total_hours'].sum()
+                st.metric("إجمالي ساعات التشغيل", f"{total_hours:,.0f}")
+        
         # خيارات التصدير
         st.markdown("---")
+        st.subheader("📤 خيارات التصدير")
+        
         col1, col2 = st.columns(2)
         
         with col1:
+            if st.button("💾 حفظ التعديلات"):
+                save_data(machines_df)
+                st.success("✅ تم حفظ التعديلات بنجاح!")
+        
+        with col2:
             # تصدير إلى Excel
-            if st.button("📥 تصدير إلى Excel"):
-                buffer = BytesIO()
-                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    machines_df.to_excel(writer, index=False, sheet_name='Machines')
-                
-                st.download_button(
-                    label="تحميل ملف Excel",
-                    data=buffer.getvalue(),
-                    file_name=f"machines_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                machines_df.to_excel(writer, index=False, sheet_name='Machines')
+            
+            st.download_button(
+                label="📥 تحميل ملف Excel",
+                data=buffer.getvalue(),
+                file_name=f"machines_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 with tab3:
     st.header("تسجيل عملية صيانة جديدة")
     
     if machines_df.empty:
-        st.info("لا توجد ماكينات مضافة حتى الآن.")
+        st.info("📝 لا توجد ماكينات مضافة حتى الآن.")
     else:
         with st.form("maintenance_form"):
             # اختيار الماكينة
             machine_options = machines_df['machine_name'].tolist()
-            selected_machine = st.selectbox("اختر الماكينة", machine_options)
+            selected_machine = st.selectbox("اختر الماكينة", machine_options, key="selected_machine")
+            
+            if selected_machine:
+                # عرض معلومات الماكينة المختارة
+                machine_info = machines_df[machines_df['machine_name'] == selected_machine].iloc[0]
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.info(f"**اسم الماكينة:** {machine_info['machine_name']}")
+                    st.info(f"**النوع:** {machine_info['machine_type']}")
+                    st.info(f"**ساعات التشغيل الحالية:** {machine_info['total_hours']:,.0f}")
+                
+                with col2:
+                    if 'greasing_countdown' in machine_info:
+                        st.info(f"**متبقي للتشحيم:** {machine_info['greasing_countdown']:,.0f} ساعة")
+                    if 'oil_change_countdown' in machine_info:
+                        st.info(f"**متبقي لتغيير الزيت:** {machine_info['oil_change_countdown']:,.0f} ساعة")
             
             # نوع الصيانة
             maintenance_type = st.selectbox(
                 "نوع الصيانة",
-                ["تغيير زيت", "تشحيم", "صيانة دورية", "إصلاح عطل", "أخرى"]
+                ["تغيير زيت", "تشحيم", "صيانة دورية", "إصلاح عطل", "فحص روتيني", "أخرى"],
+                key="maintenance_type"
             )
             
             col1, col2 = st.columns(2)
             with col1:
-                maintenance_date = st.date_input("تاريخ الصيانة", datetime.now())
+                maintenance_date = st.date_input("تاريخ الصيانة", datetime.now(), key="maintenance_date")
                 current_hours = st.number_input(
                     "ساعات التشغيل الحالية",
                     min_value=0.0,
-                    value=float(machines_df.loc[machines_df['machine_name'] == selected_machine, 'total_hours'].iloc[0]) if not machines_df.empty else 0.0,
-                    step=10.0
+                    value=float(machine_info['total_hours']) if not machines_df.empty else 0.0,
+                    step=10.0,
+                    key="current_hours"
                 )
             
             with col2:
-                technician = st.text_input("اسم الفني")
-                cost = st.number_input("تكلفة الصيانة", min_value=0.0, value=0.0, step=100.0)
+                technician = st.text_input("اسم الفني", key="technician")
+                cost = st.number_input("تكلفة الصيانة (ريال)", min_value=0.0, value=0.0, step=100.0, key="cost")
             
-            description = st.text_area("وصف الصيانة/الملاحظات")
+            description = st.text_area("وصف الصيانة/الملاحظات", key="description", height=100)
             
-            submit_maintenance = st.form_submit_button("تسجيل الصيانة")
+            col1, col2 = st.columns(2)
+            with col1:
+                submit_maintenance = st.form_submit_button("✅ تسجيل الصيانة")
             
-            if submit_maintenance:
+            with col2:
+                cancel_maintenance = st.form_submit_button("❌ إلغاء")
+            
+            if submit_maintenance and selected_machine:
                 # تحديث بيانات الماكينة
                 machine_idx = machines_df[machines_df['machine_name'] == selected_machine].index[0]
                 
@@ -409,97 +472,52 @@ with tab3:
                 if maintenance_type == "تغيير زيت":
                     next_oil_hours = current_hours + machines_df.at[machine_idx, 'oil_change_interval']
                     machines_df.at[machine_idx, 'next_oil_change_hours'] = next_oil_hours
+                    st.success(f"✅ تم تحديث موعد تغيير الزيت القادم إلى {next_oil_hours:,.0f} ساعة")
                 
                 elif maintenance_type == "تشحيم":
                     next_greasing_hours = current_hours + machines_df.at[machine_idx, 'greasing_interval']
                     machines_df.at[machine_idx, 'next_greasing_hours'] = next_greasing_hours
+                    st.success(f"✅ تم تحديث موعد التشحيم القادم إلى {next_greasing_hours:,.0f} ساعة")
                 
                 elif maintenance_type == "صيانة دورية":
                     next_other_hours = current_hours + machines_df.at[machine_idx, 'other_maintenance_interval']
                     machines_df.at[machine_idx, 'next_other_maintenance_hours'] = next_other_hours
+                    st.success(f"✅ تم تحديث موعد الصيانة الدورية القادم إلى {next_other_hours:,.0f} ساعة")
+                
+                # إعادة حساب العدادات
+                machines_df = calculate_countdowns(machines_df)
                 
                 # حفظ التغييرات
                 save_data(machines_df)
                 st.session_state.changes_made = True
-                st.success(f"تم تسجيل صيانة '{maintenance_type}' للماكينة '{selected_machine}' بنجاح!")
+                st.session_state.machines_df = machines_df
+                
+                # عرض ملخص الصيانة
+                st.markdown("---")
+                st.subheader("📋 ملخص الصيانة المسجلة")
+                
+                summary_cols = st.columns(2)
+                with summary_cols[0]:
+                    st.info(f"**الماكينة:** {selected_machine}")
+                    st.info(f"**نوع الصيانة:** {maintenance_type}")
+                    st.info(f"**التاريخ:** {maintenance_date}")
+                    st.info(f"**الفني:** {technician if technician else 'غير محدد'}")
+                
+                with summary_cols[1]:
+                    st.info(f"**ساعات التشغيل:** {current_hours:,.0f}")
+                    st.info(f"**التكلفة:** {cost:,.0f} ريال")
+                    if description:
+                        st.info(f"**الملاحظات:** {description}")
+                
+                st.success(f"✅ تم تسجيل صيانة '{maintenance_type}' للماكينة '{selected_machine}' بنجاح!")
                 st.rerun()
-
-with tab4:
-    st.header("التقارير والإحصائيات")
-    
-    if machines_df.empty:
-        st.info("لا توجد بيانات لعرض التقارير.")
-    else:
-        # تقرير الصيانة القادمة
-        st.subheader("📅 مواعيد الصيانة القادمة")
-        
-        # إنشاء تقرير بالماكينات الأقرب لموعد الصيانة
-        upcoming_df = machines_df.copy()
-        
-        if 'greasing_countdown' in upcoming_df.columns:
-            # ترتيب حسب الأقرب موعداً للصيانة
-            upcoming_df = upcoming_df.sort_values('greasing_countdown')
-            
-            # عرض أول 10 ماكينات
-            st.dataframe(
-                upcoming_df[['machine_name', 'machine_type', 'total_hours', 
-                           'greasing_countdown', 'oil_change_countdown', 
-                           'other_maintenance_countdown']].head(10).rename(columns={
-                    'machine_name': 'اسم الماكينة',
-                    'machine_type': 'النوع',
-                    'total_hours': 'ساعات التشغيل',
-                    'greasing_countdown': 'متبقي للتشحيم',
-                    'oil_change_countdown': 'متبقي لتغيير الزيت',
-                    'other_maintenance_countdown': 'متبقي للصيانة الأخرى'
-                }),
-                use_container_width=True
-            )
-        
-        # إحصائيات حسب نوع الماكينة
-        st.markdown("---")
-        st.subheader("📊 إحصائيات حسب نوع الماكينة")
-        
-        if 'machine_type' in machines_df.columns:
-            type_stats = machines_df.groupby('machine_type').agg({
-                'machine_name': 'count',
-                'total_hours': 'mean',
-                'total_hours': 'sum'
-            }).rename(columns={'machine_name': 'عدد الماكينات', 'total_hours': 'إجمالي ساعات التشغيل'})
-            
-            st.dataframe(type_stats, use_container_width=True)
-
-# قسم التحميل اليدوي لملف Excel
-st.sidebar.markdown("---")
-st.sidebar.subheader("تحميل ملف Excel يدوياً")
-
-uploaded_file = st.sidebar.file_uploader("اختر ملف Excel", type=['xlsx', 'xls'])
-
-if uploaded_file is not None:
-    try:
-        new_df = pd.read_excel(uploaded_file, engine='openpyxl')
-        if not new_df.empty:
-            save_data(new_df)
-            st.sidebar.success("تم تحميل الملف بنجاح!")
-            st.session_state.machines_df = new_df
-            st.rerun()
-    except Exception as e:
-        st.sidebar.error(f"خطأ في تحميل الملف: {str(e)}")
-
-# معلومات حول التعديلات غير المحفوظة
-if st.session_state.get('changes_made', False):
-    st.sidebar.warning("⚠️ لديك تغييرات غير محفوظة على GitHub")
-    
-    if st.sidebar.button("حفظ التغييرات محلياً"):
-        save_data(machines_df)
-        st.session_state.changes_made = False
-        st.sidebar.success("تم الحفظ محلياً!")
-        st.rerun()
 
 # تذييل الصفحة
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: gray;">
-    <p>نظام تتبع صيانة الماكينات | تم التطوير باستخدام Streamlit</p>
+    <p>نظام تتبع صيانة الماكينات | إصدار مبسط</p>
     <p>لتشغيل النظام: <code>streamlit run app.py</code></p>
+    <p>المتطلبات الأساسية: streamlit, pandas, openpyxl</p>
 </div>
 """, unsafe_allow_html=True)
