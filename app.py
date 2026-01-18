@@ -1,11 +1,9 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-from github import Github
-from github import Auth
 import os
 from io import BytesIO
-import plotly.express as px
+import matplotlib.pyplot as plt
 
 # إعداد الصفحة
 st.set_page_config(
@@ -90,29 +88,30 @@ def calculate_countdowns(df):
 # دالة للتحميل من GitHub
 def load_from_github():
     try:
-        # استخدام التوكن من إعدادات Streamlit السريعة
         github_token = st.secrets.get("GITHUB_TOKEN", "")
         
         if not github_token:
             st.warning("لم يتم تكوين GitHub Token. يرجى إضافته في إعدادات Streamlit Secrets.")
             return None
         
+        from github import Github, Auth
+        
         auth = Auth.Token(github_token)
         g = Github(auth=auth)
         
-        # تحديد المستودع
         repo_name = st.secrets.get("GITHUB_REPO", "your-username/your-repo-name")
         repo = g.get_repo(repo_name)
         
-        # تحميل ملف Excel
         file_content = repo.get_contents("machines_data.xlsx")
         
-        # حفظ الملف محليًا
         with open('machines_data.xlsx', 'wb') as f:
             f.write(file_content.decoded_content)
         
         st.success("✅ تم تحميل البيانات من GitHub بنجاح!")
         return load_data()
+    except ImportError:
+        st.error("مكتبة PyGithub غير مثبتة. يرجى تثبيتها باستخدام: pip install pygithub")
+        return None
     except Exception as e:
         st.error(f"خطأ في تحميل البيانات من GitHub: {str(e)}")
         return None
@@ -126,20 +125,19 @@ def push_to_github():
             st.warning("لم يتم تكوين GitHub Token. يرجى إضافته في إعدادات Streamlit Secrets.")
             return False
         
+        from github import Github, Auth
+        
         auth = Auth.Token(github_token)
         g = Github(auth=auth)
         
         repo_name = st.secrets.get("GITHUB_REPO", "your-username/your-repo-name")
         repo = g.get_repo(repo_name)
         
-        # قراءة الملف المحلي
         with open('machines_data.xlsx', 'rb') as f:
             content = f.read()
         
-        # محاولة الحصول على الملف الموجود
         try:
             file = repo.get_contents("machines_data.xlsx")
-            # تحديث الملف الموجود
             repo.update_file(
                 path="machines_data.xlsx",
                 message="تحديث بيانات الماكينات - " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -147,7 +145,6 @@ def push_to_github():
                 sha=file.sha
             )
         except:
-            # إنشاء ملف جديد
             repo.create_file(
                 path="machines_data.xlsx",
                 message="إنشاء ملف بيانات الماكينات - " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -156,6 +153,9 @@ def push_to_github():
         
         st.success("✅ تم رفع البيانات إلى GitHub بنجاح!")
         return True
+    except ImportError:
+        st.error("مكتبة PyGithub غير مثبتة. يرجى تثبيتها باستخدام: pip install pygithub")
+        return False
     except Exception as e:
         st.error(f"خطأ في رفع البيانات إلى GitHub: {str(e)}")
         return False
@@ -238,7 +238,6 @@ with st.sidebar:
                 'status': 'نشطة'
             }
             
-            # إضافة الماكينة الجديدة
             machines_df = pd.concat([machines_df, pd.DataFrame([new_machine])], ignore_index=True)
             save_data(machines_df)
             st.session_state.changes_made = True
@@ -301,24 +300,6 @@ with tab1:
                 )
             else:
                 st.success("🎉 لا توجد ماكينات تحتاج صيانة عاجلة حالياً.")
-        
-        # مخطط حالة الماكينات
-        st.markdown("---")
-        st.subheader("📊 توزيع حالة الماكينات")
-        
-        if 'overall_status' in machines_df.columns:
-            status_counts = machines_df['overall_status'].value_counts()
-            
-            if not status_counts.empty:
-                fig = px.pie(
-                    values=status_counts.values,
-                    names=status_counts.index,
-                    color=status_counts.index,
-                    color_discrete_map={'🟢 جيد': 'green', '🟡 قريب': 'yellow', '⚠️ يحتاج صيانة': 'red'},
-                    hole=0.4
-                )
-                fig.update_layout(showlegend=True)
-                st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
     st.header("قائمة جميع الماكينات")
@@ -486,15 +467,6 @@ with tab4:
             }).rename(columns={'machine_name': 'عدد الماكينات', 'total_hours': 'إجمالي ساعات التشغيل'})
             
             st.dataframe(type_stats, use_container_width=True)
-            
-            # مخطط عمودي
-            fig = px.bar(
-                type_stats,
-                x=type_stats.index,
-                y='عدد الماكينات',
-                title="توزيع الماكينات حسب النوع"
-            )
-            st.plotly_chart(fig, use_container_width=True)
 
 # قسم التحميل اليدوي لملف Excel
 st.sidebar.markdown("---")
