@@ -15,16 +15,17 @@ EXCEL_PATH = "machines.xlsx"
 @st.cache_data
 def load_excel():
     if not os.path.exists(EXCEL_PATH):
-        st.error("❌ ملف machines.xlsx غير موجود في الريبو")
+        st.error("❌ ملف machines.xlsx غير موجود")
         st.stop()
 
     xls = pd.ExcelFile(EXCEL_PATH, engine="openpyxl")
 
-    return {
-        "machines": pd.read_excel(xls, "Machines"),
-        "types": pd.read_excel(xls, "Maintenance_Types"),
-        "logs": pd.read_excel(xls, "Maintenance_Log"),
-    }
+    machines = pd.read_excel(xls, "Machines")
+    types = pd.read_excel(xls, "Maintenance_Types")
+    logs = pd.read_excel(xls, "Maintenance_Log")
+
+    return machines, types, logs
+
 
 def save_excel(machines, types, logs):
     with pd.ExcelWriter(EXCEL_PATH, engine="openpyxl", mode="w") as writer:
@@ -34,14 +35,16 @@ def save_excel(machines, types, logs):
 
     st.cache_data.clear()
 
+
 # ---------------- APP ----------------
 st.title("🛠️ Maintenance Management System")
 
-data = load_excel()
+machines, types, logs = load_excel()
 
-machines = data["machines"]
-types = data["types"]
-logs = data["logs"]
+# ---------------- DETECT COLUMNS ----------------
+machine_col = machines.columns[0]        # اسم الماكينة
+dept_col = machines.columns[1]           # القسم
+maint_col = types.columns[1]             # نوع الصيانة
 
 # ---------------- SIDEBAR ----------------
 page = st.sidebar.radio(
@@ -53,23 +56,23 @@ page = st.sidebar.radio(
 if page == "إضافة صيانة":
     st.subheader("➕ تسجيل صيانة جديدة")
 
-    with st.form("add_maintenance_form"):
+    with st.form("maintenance_form"):
 
         machine_name = st.selectbox(
             "اسم الماكينة",
-            machines["Machine_Name"].unique()
+            machines[machine_col].unique()
         )
 
         department = machines.loc[
-            machines["Machine_Name"] == machine_name,
-            "Department"
+            machines[machine_col] == machine_name,
+            dept_col
         ].values[0]
 
         st.text_input("القسم", department, disabled=True)
 
         maintenance_type = st.selectbox(
             "نوع الصيانة",
-            types["Maintenance_Name"].unique()
+            types[maint_col].unique()
         )
 
         last_date = st.date_input("تاريخ آخر صيانة")
@@ -84,11 +87,11 @@ if page == "إضافة صيانة":
 
     if submit:
         new_log = {
-            "Log_ID": len(logs) + 1,
-            "Machine_Name": machine_name,
-            "Maintenance_Name": maintenance_type,
-            "Last_Date": last_date,
-            "Operating_Hours": operating_hours
+            logs.columns[0]: len(logs) + 1,
+            logs.columns[1]: machine_name,
+            logs.columns[2]: maintenance_type,
+            logs.columns[3]: last_date,
+            logs.columns[4]: operating_hours
         }
 
         logs = pd.concat([logs, pd.DataFrame([new_log])], ignore_index=True)
@@ -106,11 +109,12 @@ elif page == "عرض الماكينات":
 elif page == "سجل الصيانة":
     st.subheader("🗒️ سجل الصيانة")
 
-    logs["Last_Date"] = pd.to_datetime(logs["Last_Date"], errors="coerce")
-    logs["Days_Since_Last"] = (datetime.now() - logs["Last_Date"]).dt.days
+    date_col = logs.columns[3]
+    logs[date_col] = pd.to_datetime(logs[date_col], errors="coerce")
+    logs["Days_Since_Last"] = (datetime.now() - logs[date_col]).dt.days
 
     st.dataframe(logs, use_container_width=True)
 
 # ---------------- FOOTER ----------------
 st.markdown("---")
-st.caption("Maintenance System | Streamlit + Excel + GitHub")
+st.caption("Maintenance System | Streamlit + Excel | Portfolio Ready")
