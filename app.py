@@ -1372,61 +1372,73 @@ def settings_ui():
     machines_data = load_machines_data()
     settings = machines_data.get("settings", {})
     
-    with st.form("system_settings_form"):
-        st.subheader("⚙️ إعدادات المؤقتات")
+    # قسم إعدادات المؤقتات
+    st.subheader("⚙️ إعدادات المؤقتات")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        warning_days = st.number_input(
+            "الأيام للإشعار التحذيري",
+            min_value=1,
+            value=settings.get("warning_days", APP_CONFIG["WARNING_DAYS_BEFORE"]),
+            help="عدد الأيام قبل موعد الصيانة لتغيير الحالة إلى تحذير"
+        )
+    
+    with col2:
+        critical_days = st.number_input(
+            "الأيام للإشعار الحرج",
+            min_value=1,
+            value=settings.get("critical_days", APP_CONFIG["CRITICAL_DAYS_BEFORE"]),
+            help="عدد الأيام قبل موعد الصيانة لتغيير الحالة إلى حرج"
+        )
+    
+    # زر حفظ الإعدادات
+    if st.button("💾 حفظ الإعدادات", key="save_settings", type="primary"):
+        machines_data["settings"] = {
+            "warning_days": warning_days,
+            "critical_days": critical_days
+        }
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            warning_days = st.number_input(
-                "الأيام للإشعار التحذيري",
-                min_value=1,
-                value=settings.get("warning_days", APP_CONFIG["WARNING_DAYS_BEFORE"]),
-                help="عدد الأيام قبل موعد الصيانة لتغيير الحالة إلى تحذير"
-            )
-        
-        with col2:
-            critical_days = st.number_input(
-                "الأيام للإشعار الحرج",
-                min_value=1,
-                value=settings.get("critical_days", APP_CONFIG["CRITICAL_DAYS_BEFORE"]),
-                help="عدد الأيام قبل موعد الصيانة لتغيير الحالة إلى حرج"
-            )
-        
-        st.subheader("🔄 إدارة البيانات")
-        
-        data_col1, data_col2 = st.columns(2)
-        
-        with data_col1:
-            if st.form_submit_button("💾 حفظ الإعدادات", type="primary"):
-                machines_data["settings"] = {
-                    "warning_days": warning_days,
-                    "critical_days": critical_days
-                }
-                
-                if save_machines_data(machines_data):
-                    st.success("✅ تم حفظ الإعدادات بنجاح!")
-                    st.rerun()
-        
-        with data_col2:
-            if st.button("🔄 تحديث جميع المؤقتات", key="refresh_all_timers"):
-                # إعادة حساب جميع المؤقتات
-                for machine in machines_data["machines"]:
-                    for maint in machine.get("next_maintenance", []):
-                        maint["remaining"] = calculate_remaining_time(
-                            maint.get("next_date"),
-                            maint.get("next_hours"),
-                            machine.get("total_hours", 0)
-                        )
-                
+        if save_machines_data(machines_data):
+            st.success("✅ تم حفظ الإعدادات بنجاح!")
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # قسم إدارة البيانات
+    st.subheader("🔄 إدارة البيانات")
+    
+    col_data1, col_data2 = st.columns(2)
+    
+    with col_data1:
+        if st.button("🔄 تحديث جميع المؤقتات", key="refresh_all_timers"):
+            # إعادة حساب جميع المؤقتات
+            for machine in machines_data["machines"]:
+                for maint in machine.get("next_maintenance", []):
+                    maint["remaining"] = calculate_remaining_time(
+                        maint.get("next_date"),
+                        maint.get("next_hours"),
+                        machine.get("total_hours", 0)
+                    )
+            
+            if save_machines_data(machines_data):
+                update_excel_with_machines(machines_data)
+                st.success("✅ تم تحديث جميع المؤقتات!")
+                st.rerun()
+    
+    with col_data2:
+        if st.button("🗑️ حذف جميع البيانات", key="delete_all_data"):
+            if st.checkbox("أؤكد أنني أريد حذف جميع البيانات", key="confirm_delete_all"):
+                machines_data["machines"] = []
                 if save_machines_data(machines_data):
                     update_excel_with_machines(machines_data)
-                    st.success("✅ تم تحديث جميع المؤقتات!")
+                    st.warning("⚠️ تم حذف جميع البيانات بنجاح!")
                     st.rerun()
     
     st.markdown("---")
     
-    # إدارة النسخ الاحتياطي
+    # قسم النسخ الاحتياطي
     st.subheader("💾 النسخ الاحتياطي")
     
     col_backup1, col_backup2 = st.columns(2)
@@ -1460,6 +1472,24 @@ def settings_ui():
                         st.error("❌ ملف النسخ الاحتياطي غير صالح")
                 except Exception as e:
                     st.error(f"❌ خطأ في استعادة البيانات: {e}")
+    
+    st.markdown("---")
+    
+    # قسم المعلومات
+    st.subheader("ℹ️ معلومات النظام")
+    
+    info_col1, info_col2 = st.columns(2)
+    
+    with info_col1:
+        st.info(f"**عدد الماكينات:** {len(machines_data['machines'])}")
+        st.info(f"**أنواع الصيانة:** {len(machines_data['maintenance_types'])}")
+    
+    with info_col2:
+        if os.path.exists(APP_CONFIG["LOCAL_FILE"]):
+            file_size = os.path.getsize(APP_CONFIG["LOCAL_FILE"]) / 1024  # بالكيلوبايت
+            st.info(f"**حجم ملف Excel:** {file_size:.1f} KB")
+        else:
+            st.info("**حجم ملف Excel:** غير موجود")
 
 # ===============================
 # 🔐 تسجيل الدخول
@@ -1614,6 +1644,7 @@ def main():
     # عرض تحديث الساعات إذا طلب
     if st.session_state.get("show_update_hours", False):
         update_machine_hours_ui()
+        st.session_state["show_update_hours"] = False
         return
     
     # التبويبات الرئيسية
