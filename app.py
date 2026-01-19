@@ -9,6 +9,7 @@ import shutil
 import re
 from datetime import datetime, timedelta
 import uuid
+import base64
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -20,7 +21,7 @@ APP_CONFIG = {
     "APP_ICON": "⚙️",
     
     # إعدادات GitHub
-    "REPO_NAME": "mahmedabdallh123/grees-and-oil",
+    "REPO_NAME": "mahmedabdallh123/BELYARN",
     "BRANCH": "main",
     "FILE_PATH": "oil.xlsx",
     "LOCAL_FILE": "oil.xlsx",
@@ -66,6 +67,116 @@ MAX_ACTIVE_USERS = APP_CONFIG["MAX_ACTIVE_USERS"]
 
 # إنشاء رابط GitHub تلقائياً
 GITHUB_EXCEL_URL = f"https://github.com/{APP_CONFIG['REPO_NAME'].split('/')[0]}/{APP_CONFIG['REPO_NAME'].split('/')[1]}/raw/{APP_CONFIG['BRANCH']}/{APP_CONFIG['FILE_PATH']}"
+
+# ===============================
+# 🔄 دوال المزامنة مع GitHub - معدلة
+# ===============================
+def save_local_excel_and_push(sheets_dict, commit_message="Update from Oil Maintenance System"):
+    """حفظ الملف محلياً ورفعه إلى GitHub باستخدام GitHub API مباشرة"""
+    try:
+        # 1. حفظ محلياً أولاً
+        with pd.ExcelWriter(APP_CONFIG["LOCAL_FILE"], engine="openpyxl") as writer:
+            for name, df in sheets_dict.items():
+                df.to_excel(writer, sheet_name=name, index=False)
+        
+        st.info("✅ تم الحفظ المحلي بنجاح")
+        
+        # 2. محاولة الرفع إلى GitHub
+        token = st.secrets.get("github", {}).get("token", None)
+        
+        if not token:
+            st.warning("⚠️ لم يتم العثور على GitHub token. سيتم الحفظ محلياً فقط.")
+            return sheets_dict
+        
+        # قراءة الملف المحفوظ
+        with open(APP_CONFIG["LOCAL_FILE"], "rb") as f:
+            file_content = f.read()
+        
+        # ترميز المحتوى إلى base64
+        encoded_content = base64.b64encode(file_content).decode('utf-8')
+        
+        # إنشاء payload للرفع
+        owner, repo = APP_CONFIG["REPO_NAME"].split('/')
+        file_path = APP_CONFIG["FILE_PATH"]
+        branch = APP_CONFIG["BRANCH"]
+        
+        # URL لـ GitHub API
+        api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
+        
+        # الحصول على معلومات الملف الحالي (إذا كان موجوداً)
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        # التحقق مما إذا كان الملف موجوداً
+        response = requests.get(api_url, headers=headers, params={"ref": branch})
+        
+        if response.status_code == 200:
+            # الملف موجود، نحتاج إلى SHA للتحديث
+            file_info = response.json()
+            sha = file_info.get("sha")
+            
+            payload = {
+                "message": commit_message,
+                "content": encoded_content,
+                "sha": sha,
+                "branch": branch
+            }
+            
+            # تحديث الملف
+            update_response = requests.put(api_url, headers=headers, json=payload)
+            
+            if update_response.status_code == 200:
+                st.success("✅ تم تحديث الملف على GitHub بنجاح!")
+            else:
+                st.error(f"❌ فشل تحديث الملف: {update_response.json().get('message', 'Unknown error')}")
+        
+        elif response.status_code == 404:
+            # الملف غير موجود، إنشاء جديد
+            payload = {
+                "message": commit_message,
+                "content": encoded_content,
+                "branch": branch
+            }
+            
+            # إنشاء الملف
+            create_response = requests.put(api_url, headers=headers, json=payload)
+            
+            if create_response.status_code == 201:
+                st.success("✅ تم إنشاء الملف على GitHub بنجاح!")
+            else:
+                st.error(f"❌ فشل إنشاء الملف: {create_response.json().get('message', 'Unknown error')}")
+        
+        else:
+            st.error(f"❌ خطأ في الاتصال بـ GitHub API: {response.status_code}")
+        
+        return sheets_dict
+        
+    except Exception as e:
+        st.error(f"❌ خطأ في الحفظ: {e}")
+        # حتى لو فشل الرفع لـ GitHub، نعود بالبيانات المحفوظة محلياً
+        return sheets_dict
+
+def fetch_from_github():
+    """جلب الملف من GitHub"""
+    try:
+        # أولاً: جرب رابط RAW المباشر
+        response = requests.get(GITHUB_EXCEL_URL, stream=True, timeout=15)
+        
+        if response.status_code == 200:
+            with open(APP_CONFIG["LOCAL_FILE"], "wb") as f:
+                shutil.copyfileobj(response.raw, f)
+            
+            st.success("✅ تم تحديث البيانات من GitHub")
+            return True
+        else:
+            st.warning("⚠️ لا يمكن الوصول للملف على GitHub، سيتم استخدام النسخة المحلية")
+            return False
+            
+    except Exception as e:
+        st.warning(f"⚠️ فشل التحديث من GitHub: {e}")
+        return False
 
 # ===============================
 # 🔐 إدارة المستخدمين والجلسات
@@ -210,74 +321,6 @@ def initialize_excel_file():
             df_history.to_excel(writer, sheet_name='Maintenance_History', index=False)
         
         st.info("✅ تم إنشاء ملف Excel جديد ببنية منظمة")
-
-# ===============================
-# 🔄 مزامنة مع GitHub
-# ===============================
-def save_local_excel_and_push(sheets_dict, commit_message="Update from Oil Maintenance System"):
-    """حفظ الملف محلياً ورفعه إلى GitHub"""
-    try:
-        # حفظ محلياً
-        with pd.ExcelWriter(APP_CONFIG["LOCAL_FILE"], engine="openpyxl") as writer:
-            for name, df in sheets_dict.items():
-                df.to_excel(writer, sheet_name=name, index=False)
-        
-        # محاولة الرفع إلى GitHub إذا كان هناك توكن
-        try:
-            from github import Github
-            
-            token = st.secrets.get("github", {}).get("token", None)
-            if token:
-                g = Github(token)
-                repo = g.get_repo(APP_CONFIG["REPO_NAME"])
-                
-                with open(APP_CONFIG["LOCAL_FILE"], "rb") as f:
-                    content = f.read()
-                
-                try:
-                    contents = repo.get_contents(APP_CONFIG["FILE_PATH"], ref=APP_CONFIG["BRANCH"])
-                    repo.update_file(
-                        path=APP_CONFIG["FILE_PATH"],
-                        message=commit_message,
-                        content=content,
-                        sha=contents.sha,
-                        branch=APP_CONFIG["BRANCH"]
-                    )
-                    st.success("✅ تم المزامنة مع GitHub بنجاح")
-                except:
-                    repo.create_file(
-                        path=APP_CONFIG["FILE_PATH"],
-                        message=commit_message,
-                        content=content,
-                        branch=APP_CONFIG["BRANCH"]
-                    )
-                    st.success("✅ تم إنشاء الملف على GitHub")
-        
-        except ImportError:
-            st.info("ℹ️ مكتبة PyGithub غير مثبتة - الحفظ محلي فقط")
-        except Exception as e:
-            st.warning(f"⚠️ تعذر الرفع إلى GitHub: {e}")
-        
-        return sheets_dict
-        
-    except Exception as e:
-        st.error(f"❌ خطأ في الحفظ: {e}")
-        return None
-
-def fetch_from_github():
-    """جلب الملف من GitHub"""
-    try:
-        response = requests.get(GITHUB_EXCEL_URL, stream=True, timeout=15)
-        response.raise_for_status()
-        
-        with open(APP_CONFIG["LOCAL_FILE"], "wb") as f:
-            shutil.copyfileobj(response.raw, f)
-        
-        st.success("✅ تم تحديث البيانات من GitHub")
-        return True
-    except Exception as e:
-        st.error(f"⚠️ فشل التحديث من GitHub: {e}")
-        return False
 
 # ===============================
 # 📊 دوال حساب المؤقتات
@@ -872,6 +915,7 @@ def maintenance_management_ui():
                 machines_data["maintenance_types"].append(new_type)
                 
                 if save_machines_data(machines_data):
+                    update_excel_with_machines(machines_data)
                     st.success(f"✅ تم إضافة نوع الصيانة '{type_name}' بنجاح")
                     st.rerun()
 
@@ -1354,9 +1398,10 @@ def update_excel_with_machines(machines_data):
         }
         
         # استخدام دالة الحفظ المشتركة
+        username = st.session_state.get("username", "System")
         save_local_excel_and_push(
             sheets_dict,
-            f"تحديث بيانات الصيانة - {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+            f"تحديث بيانات الصيانة بواسطة {username} - {datetime.now().strftime('%d/%m/%Y %H:%M')}"
         )
         
         return True
@@ -1475,7 +1520,7 @@ def settings_ui():
     
     st.markdown("---")
     
-    # قسم المعلومات
+    # قسم معلومات النظام
     st.subheader("ℹ️ معلومات النظام")
     
     info_col1, info_col2 = st.columns(2)
@@ -1490,6 +1535,13 @@ def settings_ui():
             st.info(f"**حجم ملف Excel:** {file_size:.1f} KB")
         else:
             st.info("**حجم ملف Excel:** غير موجود")
+        
+        # عرض حالة GitHub Token
+        token_exists = bool(st.secrets.get("github", {}).get("token", None))
+        if token_exists:
+            st.success("🔑 **GitHub Token:** متوفر")
+        else:
+            st.warning("🔑 **GitHub Token:** غير متوفر")
 
 # ===============================
 # 🔐 تسجيل الدخول
@@ -1591,6 +1643,12 @@ def main():
         if st.button("🔄 تحديث البيانات من GitHub", key="refresh_github_sidebar"):
             if fetch_from_github():
                 st.rerun()
+        
+        if st.button("💾 حفظ الملف محلياً", key="save_local"):
+            # قراءة الملف الحالي وتحديثه
+            machines_data = load_machines_data()
+            update_excel_with_machines(machines_data)
+            st.success("✅ تم الحفظ المحلي بنجاح!")
         
         if st.button("🗑️ مسح الكاش", key="clear_cache_sidebar"):
             try:
