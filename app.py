@@ -781,12 +781,12 @@ with tab4:
         
         st.write("**معلومات البيانات:**")
         st.write(f"- عدد الماكينات: {len(machines_df)}")
-        st.write(f- عدد الأعمدة: {len(machines_df.columns) if not machines_df.empty else 0}")
+        st.write(f"- عدد الأعمدة: {len(machines_df.columns) if not machines_df.empty else 0}")
     
     with info_col2:
         st.write("**حالة النظام:**")
         st.write(f"- تم تحميل البيانات: {'✅' if st.session_state.data_loaded else '❌'}")
-        st.write(f- وضع التصحيح: {'✅ تشغيل' if st.session_state.debug_mode else '❌ إيقاف'}")
+        st.write(f"- وضع التصحيح: {'✅ تشغيل' if st.session_state.debug_mode else '❌ إيقاف'}")
         st.write("- الإصدار: 2.0 (معدل)")
 
 # تذييل الصفحة
