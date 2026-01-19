@@ -8,10 +8,6 @@ import requests
 import shutil
 import re
 from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
-import plotly.graph_objects as go
-import plotly.express as px
-from base64 import b64decode
 import uuid
 import warnings
 warnings.filterwarnings('ignore')
@@ -299,9 +295,9 @@ def calculate_next_date(last_date_str, interval, unit):
         elif unit == "أسابيع":
             next_date = last_date + timedelta(weeks=interval)
         elif unit == "شهور":
-            next_date = last_date + relativedelta(months=interval)
+            next_date = last_date + timedelta(days=interval*30)  # تقريبي
         elif unit == "سنوات":
-            next_date = last_date + relativedelta(years=interval)
+            next_date = last_date + timedelta(days=interval*365)  # تقريبي
         else:
             return None
         
@@ -540,7 +536,7 @@ def add_machine_ui():
                 st.warning("⚠️ الرجاء إدخال اسم الماكينة")
                 return
             
-            # إنجار معرف فريد للماكينة
+            # إنشاء معرف فريد للماكينة
             machine_id = str(uuid.uuid4())[:8]
             
             # حساب التواريخ التالية للصيانة
@@ -1011,29 +1007,14 @@ def timers_dashboard_ui():
         status = timer["remaining"].get("status", "normal")
         status_counts[status] = status_counts.get(status, 0) + 1
     
-    # مخطط دائري
-    try:
-        fig = go.Figure(data=[go.Pie(
-            labels=list(status_counts.keys()),
-            values=list(status_counts.values()),
-            marker_colors=[get_status_color(s) for s in status_counts.keys()]
-        )])
-        
-        fig.update_layout(
-            title="توزيع حالات المؤقتات",
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-    except:
-        # عرض جدول بديل
-        stats_df = pd.DataFrame({
-            "الحالة": list(status_counts.keys()),
-            "العدد": list(status_counts.values()),
-            "النسبة": [f"{(count/len(all_timers)*100):.1f}%" for count in status_counts.values()]
-        })
-        
-        st.dataframe(stats_df, use_container_width=True)
+    # عرض جدول الإحصائيات
+    stats_df = pd.DataFrame({
+        "الحالة": list(status_counts.keys()),
+        "العدد": list(status_counts.values()),
+        "النسبة": [f"{(count/len(all_timers)*100):.1f}%" for count in status_counts.values()]
+    })
+    
+    st.dataframe(stats_df, use_container_width=True)
 
 def reports_ui():
     """التقارير والإحصائيات"""
@@ -1078,25 +1059,20 @@ def reports_ui():
             for loc, count in locations.items():
                 st.markdown(f"**{loc}:** {count} ماكينة")
         
-        # مخطط أعمدة لتوزيع الماكينات
-        try:
-            machines_df = pd.DataFrame(machines_data["machines"])
+        # مخطط أعمدة بسيط لتوزيع الماكينات
+        if machines_data["machines"]:
+            location_counts = {}
+            for machine in machines_data["machines"]:
+                loc = machine.get("location", "غير محدد")
+                location_counts[loc] = location_counts.get(loc, 0) + 1
             
-            if not machines_df.empty and "location" in machines_df.columns:
-                location_counts = machines_df["location"].value_counts()
-                
-                fig = px.bar(
-                    x=location_counts.index,
-                    y=location_counts.values,
-                    title="توزيع الماكينات حسب الموقع",
-                    labels={"x": "الموقع", "y": "عدد الماكينات"},
-                    color=location_counts.values,
-                    color_continuous_scale="Viridis"
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-        except:
-            pass
+            # عرض كجدول
+            location_df = pd.DataFrame({
+                "الموقع": list(location_counts.keys()),
+                "عدد الماكينات": list(location_counts.values())
+            })
+            
+            st.dataframe(location_df, use_container_width=True)
     
     with report_tabs[1]:
         st.subheader("📅 تقرير الصيانة الشهري")
@@ -1141,17 +1117,6 @@ def reports_ui():
                 st.markdown("#### 📊 توزيع الصيانة")
                 for type_name, count in type_counts.items():
                     st.markdown(f"**{type_name}:** {count}")
-            
-            # مخطط دائري لتوزيع الصيانة
-            try:
-                fig = px.pie(
-                    values=type_counts.values,
-                    names=type_counts.index,
-                    title=f"توزيع الصيانة لشهر {month}/{year}"
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            except:
-                pass
         else:
             st.info(f"ℹ️ لا توجد صيانة مجدولة لشهر {month}/{year}")
     
@@ -1187,25 +1152,6 @@ def reports_ui():
             
             with col3:
                 st.metric("⏰ متأخر", f"{delayed_percentage:.1f}%")
-            
-            # مخطط شريطي
-            performance_data = {
-                "الفئة": ["في الوقت", "متأخر"],
-                "النسبة": [on_time_percentage, delayed_percentage]
-            }
-            
-            try:
-                fig = px.bar(
-                    performance_data,
-                    x="الفئة",
-                    y="النسبة",
-                    title="نسبة التزام الصيانة",
-                    color="الفئة",
-                    color_discrete_map={"في الوقت": "#28a745", "متأخر": "#dc3545"}
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            except:
-                pass
     
     with report_tabs[3]:
         st.subheader("📄 تصدير التقارير")
@@ -1219,7 +1165,7 @@ def reports_ui():
             )
         
         with col2:
-            format_type = st.radio("التنسيق", ["Excel", "PDF", "CSV"])
+            format_type = st.radio("التنسيق", ["Excel", "CSV"])
         
         if st.button("🚀 إنشاء وتصدير التقرير", type="primary"):
             with st.spinner("جاري إنشاء التقرير..."):
@@ -1279,20 +1225,20 @@ def reports_ui():
                 
                 else:  # التقرير الشامل
                     # سيتضمن جميع البيانات
-                    df_machines = pd.DataFrame(machines_data["machines"])
+                    df_machines = pd.DataFrame([{
+                        "اسم الماكينة": m["name"],
+                        "الموديل": m.get("model", ""),
+                        "الرقم المسلسل": m.get("serial_number", ""),
+                        "المكان": m.get("location", ""),
+                        "ساعات التشغيل": m.get("total_hours", 0),
+                        "الحالة": m.get("status", "")
+                    } for m in machines_data["machines"]])
                     
                     # إنشاء ملف Excel متعدد الأوراق
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                         # ورقة الماكينات
-                        machines_df = pd.DataFrame([{
-                            "اسم الماكينة": m["name"],
-                            "الموديل": m.get("model", ""),
-                            "الرقم المسلسل": m.get("serial_number", ""),
-                            "المكان": m.get("location", ""),
-                            "ساعات التشغيل": m.get("total_hours", 0)
-                        } for m in machines_data["machines"]])
-                        machines_df.to_excel(writer, sheet_name='الماكينات', index=False)
+                        df_machines.to_excel(writer, sheet_name='الماكينات', index=False)
                         
                         # ورقة الصيانة
                         maint_data = []
@@ -1339,11 +1285,6 @@ def reports_ui():
                         file_data = df.to_csv(index=False, encoding='utf-8-sig')
                         file_name = f"{report_type}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
                         mime_type = "text/csv"
-                    
-                    else:  # PDF
-                        # يمكن إضافة مكتبة لإنشاء PDF هنا
-                        st.info("⏳ تصدير PDF قيد التطوير")
-                        return
                 
                 # زر التحميل
                 st.download_button(
