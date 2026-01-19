@@ -20,7 +20,7 @@ APP_CONFIG = {
     "APP_ICON": "⚙️",
     
     # إعدادات GitHub
-    "REPO_NAME": "mahmedabdallh123/BELYARN",
+    "REPO_NAME": "mahmedabdallh123/grees-and-oil",
     "BRANCH": "main",
     "FILE_PATH": "oil.xlsx",
     "LOCAL_FILE": "oil.xlsx",
