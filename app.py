@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import json
 import os
 import io
@@ -8,218 +7,130 @@ import requests
 import shutil
 import re
 from datetime import datetime, timedelta
-import uuid
-import base64
-import warnings
-warnings.filterwarnings('ignore')
+from base64 import b64decode
+from difflib import get_close_matches
+
+# GitHub
+try:
+    from github import Github
+    GITHUB_AVAILABLE = True
+except ImportError:
+    GITHUB_AVAILABLE = False
+
+# OCR
+try:
+    import pytesseract
+    from PIL import Image
+    import cv2
+    import numpy as np
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+    # لا نستخدم st.warning هنا لأنها قد تظهر قبل إعداد الصفحة
 
 # ===============================
-# ⚙ إعدادات التطبيق
+# إعدادات التطبيق
 # ===============================
 APP_CONFIG = {
-    "APP_TITLE": "نظام إدارة صيانة الماكينات - توقيت التشحيم وتغيير الزيت",
-    "APP_ICON": "⚙️",
-    
-    # إعدادات GitHub
-    "REPO_NAME": "mahmedabdallh123/BELYARN",
+    "APP_TITLE": "نظام إدارة مكبس القطن",
+    "APP_ICON": "🏭",
+    "REPO_NAME": "mahmedabdallh123/luva",
     "BRANCH": "main",
-    "FILE_PATH": "oil.xlsx",
-    "LOCAL_FILE": "oil.xlsx",
-    
-    # إعدادات الأمان
+    "FILE_PATH": "luva.xlsx",
+    "LOCAL_FILE": "luva.xlsx",
     "MAX_ACTIVE_USERS": 5,
-    "SESSION_DURATION_MINUTES": 60,
-    
-    # إعدادات الواجهة
-    "SHOW_TECH_SUPPORT_TO_ALL": True,
-    "CUSTOM_TABS": ["🏭 لوحة القيادة", "➕ إضافة ماكينة", "📊 إدارة الصيانة", "⏰ المؤقتات التنازلية", "📈 التقارير والإحصائيات", "⚙️ الإعدادات"],
-    
-    # أنواع الصيانة الافتراضية
-    "DEFAULT_MAINTENANCE_TYPES": [
-        {"id": "oil_change", "name": "تغيير الزيت", "unit": "ساعات", "default_interval": 1000},
-        {"id": "greasing", "name": "التشحيم", "unit": "ساعات", "default_interval": 500},
-        {"id": "filter_change", "name": "تغيير الفلتر", "unit": "ساعات", "default_interval": 2000},
-        {"id": "inspection", "name": "فحص دوري", "unit": "أيام", "default_interval": 30},
-        {"id": "calibration", "name": "معايرة", "unit": "أشهر", "default_interval": 6}
-    ],
-    
-    # إعدادات الإشعارات
-    "WARNING_DAYS_BEFORE": 7,
-    "CRITICAL_DAYS_BEFORE": 3,
-    
-    # ألوان الحالة
-    "COLORS": {
-        "normal": "#28a745",
-        "warning": "#ffc107",
-        "critical": "#dc3545",
-        "overdue": "#6c757d"
+    "SESSION_DURATION_MINUTES": 11,
+    "SHIFTS": {
+        "الاولي": {"start": 8, "end": 16},
+        "الثانيه": {"start": 16, "end": 24},
+        "الثالثه": {"start": 0, "end": 8}
     }
 }
 
-# ===============================
-# 🗂 إعدادات الملفات
-# ===============================
 USERS_FILE = "users.json"
 STATE_FILE = "state.json"
-MACHINES_FILE = "machines_data.json"
 SESSION_DURATION = timedelta(minutes=APP_CONFIG["SESSION_DURATION_MINUTES"])
 MAX_ACTIVE_USERS = APP_CONFIG["MAX_ACTIVE_USERS"]
-
-# إنشاء رابط GitHub تلقائياً
 GITHUB_EXCEL_URL = f"https://github.com/{APP_CONFIG['REPO_NAME'].split('/')[0]}/{APP_CONFIG['REPO_NAME'].split('/')[1]}/raw/{APP_CONFIG['BRANCH']}/{APP_CONFIG['FILE_PATH']}"
 
-# ===============================
-# 🔄 دوال المزامنة مع GitHub - معدلة
-# ===============================
-def save_local_excel_and_push(sheets_dict, commit_message="Update from Oil Maintenance System"):
-    """حفظ الملف محلياً ورفعه إلى GitHub باستخدام GitHub API مباشرة"""
-    try:
-        # 1. حفظ محلياً أولاً
-        with pd.ExcelWriter(APP_CONFIG["LOCAL_FILE"], engine="openpyxl") as writer:
-            for name, df in sheets_dict.items():
-                df.to_excel(writer, sheet_name=name, index=False)
-        
-        st.info("✅ تم الحفظ المحلي بنجاح")
-        
-        # 2. محاولة الرفع إلى GitHub
-        token = st.secrets.get("github", {}).get("token", None)
-        
-        if not token:
-            st.warning("⚠️ لم يتم العثور على GitHub token. سيتم الحفظ محلياً فقط.")
-            return sheets_dict
-        
-        # قراءة الملف المحفوظ
-        with open(APP_CONFIG["LOCAL_FILE"], "rb") as f:
-            file_content = f.read()
-        
-        # ترميز المحتوى إلى base64
-        encoded_content = base64.b64encode(file_content).decode('utf-8')
-        
-        # إنشاء payload للرفع
-        owner, repo = APP_CONFIG["REPO_NAME"].split('/')
-        file_path = APP_CONFIG["FILE_PATH"]
-        branch = APP_CONFIG["BRANCH"]
-        
-        # URL لـ GitHub API
-        api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
-        
-        # الحصول على معلومات الملف الحالي (إذا كان موجوداً)
-        headers = {
-            "Authorization": f"token {token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        
-        # التحقق مما إذا كان الملف موجوداً
-        response = requests.get(api_url, headers=headers, params={"ref": branch})
-        
-        if response.status_code == 200:
-            # الملف موجود، نحتاج إلى SHA للتحديث
-            file_info = response.json()
-            sha = file_info.get("sha")
-            
-            payload = {
-                "message": commit_message,
-                "content": encoded_content,
-                "sha": sha,
-                "branch": branch
-            }
-            
-            # تحديث الملف
-            update_response = requests.put(api_url, headers=headers, json=payload)
-            
-            if update_response.status_code == 200:
-                st.success("✅ تم تحديث الملف على GitHub بنجاح!")
-            else:
-                st.error(f"❌ فشل تحديث الملف: {update_response.json().get('message', 'Unknown error')}")
-        
-        elif response.status_code == 404:
-            # الملف غير موجود، إنشاء جديد
-            payload = {
-                "message": commit_message,
-                "content": encoded_content,
-                "branch": branch
-            }
-            
-            # إنشاء الملف
-            create_response = requests.put(api_url, headers=headers, json=payload)
-            
-            if create_response.status_code == 201:
-                st.success("✅ تم إنشاء الملف على GitHub بنجاح!")
-            else:
-                st.error(f"❌ فشل إنشاء الملف: {create_response.json().get('message', 'Unknown error')}")
-        
-        else:
-            st.error(f"❌ خطأ في الاتصال بـ GitHub API: {response.status_code}")
-        
-        return sheets_dict
-        
-    except Exception as e:
-        st.error(f"❌ خطأ في الحفظ: {e}")
-        # حتى لو فشل الرفع لـ GitHub، نعود بالبيانات المحفوظة محلياً
-        return sheets_dict
-
-def fetch_from_github():
-    """جلب الملف من GitHub"""
-    try:
-        # أولاً: جرب رابط RAW المباشر
-        response = requests.get(GITHUB_EXCEL_URL, stream=True, timeout=15)
-        
-        if response.status_code == 200:
-            with open(APP_CONFIG["LOCAL_FILE"], "wb") as f:
-                shutil.copyfileobj(response.raw, f)
-            
-            st.success("✅ تم تحديث البيانات من GitHub")
-            return True
-        else:
-            st.warning("⚠️ لا يمكن الوصول للملف على GitHub، سيتم استخدام النسخة المحلية")
-            return False
-            
-    except Exception as e:
-        st.warning(f"⚠️ فشل التحديث من GitHub: {e}")
-        return False
-
-# ===============================
-# 🔐 إدارة المستخدمين والجلسات
-# ===============================
+# ---------- دوال المستخدمين والجلسات (معدلة لدعم الصلاحيات المتقدمة) ----------
 def load_users():
-    """تحميل بيانات المستخدمين"""
+    """تحميل المستخدمين مع دعم الصلاحيات المتقدمة (متوافق مع بنية الأقسام)"""
     if not os.path.exists(USERS_FILE):
         default_users = {
             "admin": {
-                "password": "admin123", 
-                "role": "admin", 
+                "password": "1111",
+                "role": "admin",
                 "created_at": datetime.now().isoformat(),
-                "permissions": ["all"]
+                "permissions": {"all_sections": True},
+                "sections_permissions": {}
+            },
+            "user1": {
+                "password": "12345",
+                "role": "data_entry",
+                "created_at": datetime.now().isoformat(),
+                "permissions": {"all_sections": False},
+                "sections_permissions": {}
+            },
+            "user2": {
+                "password": "99999",
+                "role": "viewer",
+                "created_at": datetime.now().isoformat(),
+                "permissions": {"all_sections": False},
+                "sections_permissions": {}
             }
         }
         with open(USERS_FILE, "w", encoding="utf-8") as f:
             json.dump(default_users, f, indent=4, ensure_ascii=False)
         return default_users
-    
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
+            users = json.load(f)
+            # توحيد البنية
+            for uname, udata in users.items():
+                if "permissions" not in udata or isinstance(udata["permissions"], list):
+                    if udata.get("role") == "admin":
+                        udata["permissions"] = {"all_sections": True}
+                    else:
+                        udata["permissions"] = {"all_sections": False}
+                if "sections_permissions" not in udata:
+                    udata["sections_permissions"] = {}
+                if "created_at" not in udata:
+                    udata["created_at"] = datetime.now().isoformat()
+            return users
+    except Exception as e:
+        st.error(f"خطأ في users.json: {e}")
         return {
-            "admin": {
-                "password": "admin123", 
-                "role": "admin", 
-                "created_at": datetime.now().isoformat(),
-                "permissions": ["all"]
-            }
+            "admin": {"password": "1111", "role": "admin", "created_at": datetime.now().isoformat(),
+                      "permissions": {"all_sections": True}, "sections_permissions": {}}
         }
 
 def save_users(users):
-    """حفظ بيانات المستخدمين"""
+    """حفظ المستخدمين ورفعهم إلى GitHub إن أمكن"""
     try:
         with open(USERS_FILE, "w", encoding="utf-8") as f:
             json.dump(users, f, indent=4, ensure_ascii=False)
+        # رفع إلى GitHub إذا كان التوكن متوفراً
+        token = st.secrets.get("github", {}).get("token", None)
+        if token and GITHUB_AVAILABLE:
+            try:
+                g = Github(token)
+                repo = g.get_repo(APP_CONFIG["REPO_NAME"])
+                with open(USERS_FILE, "r", encoding="utf-8") as f:
+                    content = f.read()
+                try:
+                    contents = repo.get_contents(USERS_FILE, ref=APP_CONFIG["BRANCH"])
+                    repo.update_file(USERS_FILE, "تحديث المستخدمين", content, contents.sha, branch=APP_CONFIG["BRANCH"])
+                except:
+                    repo.create_file(USERS_FILE, "إنشاء ملف المستخدمين", content, branch=APP_CONFIG["BRANCH"])
+            except:
+                pass
         return True
-    except:
+    except Exception as e:
+        st.error(f"خطأ في حفظ users.json: {e}")
         return False
 
 def load_state():
-    """تحميل حالة الجلسات"""
     if not os.path.exists(STATE_FILE):
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump({}, f, indent=4, ensure_ascii=False)
@@ -231,12 +142,10 @@ def load_state():
         return {}
 
 def save_state(state):
-    """حفظ حالة الجلسات"""
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=4, ensure_ascii=False)
 
 def cleanup_sessions(state):
-    """تنظيف الجلسات المنتهية"""
     now = datetime.now()
     changed = False
     for user, info in list(state.items()):
@@ -254,1478 +163,633 @@ def cleanup_sessions(state):
         save_state(state)
     return state
 
-# ===============================
-# 🏭 إدارة بيانات الماكينات
-# ===============================
-def load_machines_data():
-    """تحميل بيانات الماكينات من JSON"""
-    if not os.path.exists(MACHINES_FILE):
-        default_data = {
-            "machines": [],
-            "maintenance_types": APP_CONFIG["DEFAULT_MAINTENANCE_TYPES"],
-            "settings": {
-                "warning_days": APP_CONFIG["WARNING_DAYS_BEFORE"],
-                "critical_days": APP_CONFIG["CRITICAL_DAYS_BEFORE"]
-            }
-        }
-        with open(MACHINES_FILE, "w", encoding="utf-8") as f:
-            json.dump(default_data, f, indent=4, ensure_ascii=False)
-        return default_data
-    
-    try:
-        with open(MACHINES_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return {
-            "machines": [],
-            "maintenance_types": APP_CONFIG["DEFAULT_MAINTENANCE_TYPES"],
-            "settings": {
-                "warning_days": APP_CONFIG["WARNING_DAYS_BEFORE"],
-                "critical_days": APP_CONFIG["CRITICAL_DAYS_BEFORE"]
-            }
-        }
-
-def save_machines_data(data):
-    """حفظ بيانات الماكينات في JSON"""
-    try:
-        with open(MACHINES_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        return True
-    except Exception as e:
-        st.error(f"❌ خطأ في حفظ بيانات الماكينات: {e}")
-        return False
-
-def initialize_excel_file():
-    """تهيئة ملف Excel إذا كان فارغاً"""
-    if not os.path.exists(APP_CONFIG["LOCAL_FILE"]) or os.path.getsize(APP_CONFIG["LOCAL_FILE"]) == 0:
-        # إنشاء DataFrame فارغ مع الأعمدة الأساسية
-        df_machines = pd.DataFrame(columns=[
-            "machine_id", "name", "model", "serial_number", "location", 
-            "installation_date", "total_hours", "status", "notes"
-        ])
-        
-        df_maintenance = pd.DataFrame(columns=[
-            "maintenance_id", "machine_id", "maintenance_type", "last_date", 
-            "last_hours", "next_date", "next_hours", "interval", "interval_unit",
-            "status", "technician", "notes"
-        ])
-        
-        df_history = pd.DataFrame(columns=[
-            "history_id", "machine_id", "maintenance_type", "date", 
-            "hours", "technician", "description", "cost", "parts_used"
-        ])
-        
-        with pd.ExcelWriter(APP_CONFIG["LOCAL_FILE"], engine='openpyxl') as writer:
-            df_machines.to_excel(writer, sheet_name='Machines', index=False)
-            df_maintenance.to_excel(writer, sheet_name='Maintenance_Schedule', index=False)
-            df_history.to_excel(writer, sheet_name='Maintenance_History', index=False)
-        
-        st.info("✅ تم إنشاء ملف Excel جديد ببنية منظمة")
-
-# ===============================
-# 📊 دوال حساب المؤقتات
-# ===============================
-def calculate_next_date(last_date_str, interval, unit):
-    """حساب التاريخ التالي للصيانة"""
-    if not last_date_str or pd.isna(last_date_str):
+def remaining_time(state, username):
+    if not username or username not in state:
         return None
-    
+    info = state.get(username)
+    if not info or not info.get("active"):
+        return None
     try:
-        last_date = pd.to_datetime(last_date_str, dayfirst=True)
-        
-        if unit == "أيام":
-            next_date = last_date + timedelta(days=interval)
-        elif unit == "أسابيع":
-            next_date = last_date + timedelta(weeks=interval)
-        elif unit == "شهور":
-            next_date = last_date + timedelta(days=interval*30)  # تقريبي
-        elif unit == "سنوات":
-            next_date = last_date + timedelta(days=interval*365)  # تقريبي
-        else:
+        lt = datetime.fromisoformat(info["login_time"])
+        remaining = SESSION_DURATION - (datetime.now() - lt)
+        if remaining.total_seconds() <= 0:
             return None
-        
-        return next_date.strftime("%d/%m/%Y")
+        return remaining
     except:
         return None
 
-def calculate_next_hours(last_hours, interval):
-    """حساب عدد الساعات التالي للصيانة"""
-    if pd.isna(last_hours) or last_hours == "":
-        return None
-    
-    try:
-        return float(last_hours) + float(interval)
-    except:
-        return None
-
-def calculate_remaining_time(next_date_str, next_hours, current_hours=None):
-    """حساب الوقت المتبقي للصيانة"""
-    remaining = {
-        "days": None,
-        "hours": None,
-        "status": "normal",
-        "percentage": 100
-    }
-    
-    # حساب الوقت المتبقي حسب التاريخ
-    if next_date_str and pd.notna(next_date_str):
-        try:
-            next_date = pd.to_datetime(next_date_str, dayfirst=True)
-            today = datetime.now()
-            
-            days_remaining = (next_date - today).days
-            
-            if days_remaining < 0:
-                remaining["days"] = abs(days_remaining)
-                remaining["status"] = "overdue"
-                remaining["percentage"] = 0
-            else:
-                remaining["days"] = days_remaining
-                
-                # تحديد حالة المؤقت
-                if days_remaining <= APP_CONFIG["CRITICAL_DAYS_BEFORE"]:
-                    remaining["status"] = "critical"
-                    remaining["percentage"] = max(0, 100 * days_remaining / APP_CONFIG["CRITICAL_DAYS_BEFORE"])
-                elif days_remaining <= APP_CONFIG["WARNING_DAYS_BEFORE"]:
-                    remaining["status"] = "warning"
-                    remaining["percentage"] = max(0, 100 * days_remaining / APP_CONFIG["WARNING_DAYS_BEFORE"])
-                else:
-                    remaining["status"] = "normal"
-                    remaining["percentage"] = max(0, 100 * (1 - (days_remaining / 365)))
-        
-        except:
-            pass
-    
-    # حساب الوقت المتبقي حسب الساعات
-    if next_hours and pd.notna(next_hours) and current_hours and pd.notna(current_hours):
-        try:
-            hours_remaining = float(next_hours) - float(current_hours)
-            
-            if hours_remaining < 0:
-                remaining["hours"] = abs(hours_remaining)
-                if remaining["status"] != "overdue":
-                    remaining["status"] = "overdue"
-            else:
-                remaining["hours"] = hours_remaining
-                
-                # إذا لم يكن هناك تاريخ، نستخدم الساعات لتحديد الحالة
-                if not remaining["days"]:
-                    if hours_remaining <= 50:
-                        remaining["status"] = "critical"
-                        remaining["percentage"] = max(0, 100 * hours_remaining / 50)
-                    elif hours_remaining <= 100:
-                        remaining["status"] = "warning"
-                        remaining["percentage"] = max(0, 100 * hours_remaining / 100)
-                    else:
-                        remaining["status"] = "normal"
-                        remaining["percentage"] = max(0, 100 * (1 - (hours_remaining / 1000)))
-        
-        except:
-            pass
-    
-    return remaining
-
-def get_status_color(status):
-    """الحصول على لون الحالة"""
-    colors = APP_CONFIG["COLORS"]
-    return colors.get(status, "#6c757d")
-
-# ===============================
-# 🏭 واجهات إدارة الماكينات
-# ===============================
-def dashboard_ui():
-    """لوحة القيادة الرئيسية"""
-    st.header("🏭 لوحة القيادة")
-    
-    # تحميل البيانات
-    machines_data = load_machines_data()
-    
-    if not machines_data["machines"]:
-        st.info("ℹ️ لا توجد ماكينات مسجلة. قم بإضافة ماكينة جديدة من تبويب 'إضافة ماكينة'")
-        return
-    
-    # عرض الإحصائيات العامة
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        total_machines = len(machines_data["machines"])
-        st.metric("🛠️ عدد الماكينات", total_machines)
-    
-    with col2:
-        active_machines = sum(1 for m in machines_data["machines"] if m.get("status") == "active")
-        st.metric("✅ ماكينات نشطة", active_machines)
-    
-    with col3:
-        critical_count = 0
-        for machine in machines_data["machines"]:
-            if machine.get("next_maintenance"):
-                for maint in machine["next_maintenance"]:
-                    if maint.get("remaining", {}).get("status") == "critical":
-                        critical_count += 1
-        st.metric("🔴 صيانة حرجة", critical_count, delta=f"{critical_count} تحتاج صيانة عاجلة")
-    
-    with col4:
-        overdue_count = 0
-        for machine in machines_data["machines"]:
-            if machine.get("next_maintenance"):
-                for maint in machine["next_maintenance"]:
-                    if maint.get("remaining", {}).get("status") == "overdue":
-                        overdue_count += 1
-        st.metric("⏰ متأخرة", overdue_count, delta_color="inverse")
-    
-    st.markdown("---")
-    
-    # عرض الماكينات مع مؤقتات الصيانة
-    st.subheader("⏰ مؤقتات الصيانة الحالية")
-    
-    for machine in machines_data["machines"]:
-        with st.expander(f"🛠️ {machine['name']} - {machine.get('model', 'غير محدد')}", expanded=False):
-            col_info1, col_info2 = st.columns([2, 1])
-            
-            with col_info1:
-                st.markdown(f"**المكان:** {machine.get('location', 'غير محدد')}")
-                st.markdown(f"**الرقم المسلسل:** {machine.get('serial_number', 'غير محدد')}")
-                st.markdown(f"**إجمالي ساعات التشغيل:** {machine.get('total_hours', 0)} ساعة")
-            
-            with col_info2:
-                status = machine.get("status", "inactive")
-                status_color = "🟢" if status == "active" else "🔴"
-                st.markdown(f"**الحالة:** {status_color} {status}")
-            
-            if machine.get("next_maintenance"):
-                st.markdown("#### 📅 جدول الصيانة")
-                
-                for maint in machine["next_maintenance"]:
-                    remaining = maint.get("remaining", {})
-                    status_color = get_status_color(remaining.get("status", "normal"))
-                    
-                    col_maint1, col_maint2, col_maint3 = st.columns([2, 2, 1])
-                    
-                    with col_maint1:
-                        st.markdown(f"**{maint['type_name']}**")
-                        st.markdown(f"آخر: {maint.get('last_date', 'غير محدد')}")
-                    
-                    with col_maint2:
-                        next_date = maint.get("next_date", "غير محدد")
-                        next_hours = maint.get("next_hours", "غير محدد")
-                        
-                        if remaining.get("days") is not None:
-                            st.markdown(f"**متبقي:** {remaining['days']} يوم")
-                        elif remaining.get("hours") is not None:
-                            st.markdown(f"**متبقي:** {remaining['hours']:.0f} ساعة")
-                        
-                        st.markdown(f"**التالي:** {next_date}")
-                    
-                    with col_maint3:
-                        # شريط التقدم
-                        if remaining.get("percentage") is not None:
-                            st.progress(remaining["percentage"] / 100)
-                        
-                        # زر تسجيل الصيانة
-                        if st.button("✅ تمت", key=f"done_{machine['id']}_{maint['type_id']}"):
-                            record_maintenance(machine['id'], maint['type_id'])
-            
-            else:
-                st.info("ℹ️ لا توجد صيانة مجدولة لهذه الماكينة")
-
-def add_machine_ui():
-    """إضافة ماكينة جديدة"""
-    st.header("➕ إضافة ماكينة جديدة")
-    
-    machines_data = load_machines_data()
-    
-    with st.form("add_machine_form"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            machine_name = st.text_input("اسم الماكينة", placeholder="مثال: مخرطة CNC 1")
-            machine_model = st.text_input("الموديل", placeholder="مثال: XYZ-2000")
-            serial_number = st.text_input("الرقم المسلسل")
-        
-        with col2:
-            location = st.text_input("المكان/الموقع", placeholder="مثال: ورشة الإنتاج")
-            installation_date = st.date_input("تاريخ التركيب", datetime.now())
-            total_hours = st.number_input("إجمالي ساعات التشغيل الحالية", min_value=0, value=0)
-        
-        st.markdown("---")
-        st.subheader("⚙️ إعدادات الصيانة")
-        
-        # اختيار أنواع الصيانة
-        maintenance_types = machines_data["maintenance_types"]
-        selected_types = []
-        
-        cols = st.columns(3)
-        for idx, maint_type in enumerate(maintenance_types):
-            with cols[idx % 3]:
-                if st.checkbox(maint_type["name"], value=True, key=f"type_{maint_type['id']}"):
-                    custom_interval = st.number_input(
-                        f"الفترة بين {maint_type['name']} ({maint_type['unit']})",
-                        min_value=1,
-                        value=maint_type["default_interval"],
-                        key=f"interval_{maint_type['id']}"
-                    )
-                    
-                    selected_types.append({
-                        "type_id": maint_type["id"],
-                        "type_name": maint_type["name"],
-                        "interval": custom_interval,
-                        "unit": maint_type["unit"],
-                        "last_date": None,
-                        "last_hours": total_hours
-                    })
-        
-        if st.form_submit_button("💾 إضافة الماكينة"):
-            if not machine_name:
-                st.warning("⚠️ الرجاء إدخال اسم الماكينة")
-                return
-            
-            # إنشاء معرف فريد للماكينة
-            machine_id = str(uuid.uuid4())[:8]
-            
-            # حساب التواريخ التالية للصيانة
-            next_maintenance = []
-            for maint in selected_types:
-                next_date = None
-                next_hours = None
-                
-                if maint["unit"] in ["أيام", "أسابيع", "شهور", "سنوات"]:
-                    next_date = calculate_next_date(
-                        installation_date.strftime("%d/%m/%Y"),
-                        maint["interval"],
-                        maint["unit"]
-                    )
-                else:
-                    next_hours = calculate_next_hours(total_hours, maint["interval"])
-                
-                remaining = calculate_remaining_time(next_date, next_hours, total_hours)
-                
-                next_maintenance.append({
-                    **maint,
-                    "next_date": next_date,
-                    "next_hours": next_hours,
-                    "remaining": remaining
-                })
-            
-            # إنشاء كائن الماكينة
-            new_machine = {
-                "id": machine_id,
-                "name": machine_name,
-                "model": machine_model,
-                "serial_number": serial_number,
-                "location": location,
-                "installation_date": installation_date.strftime("%d/%m/%Y"),
-                "total_hours": total_hours,
-                "status": "active",
-                "notes": "",
-                "next_maintenance": next_maintenance,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat()
-            }
-            
-            # إضافة الماكينة للبيانات
-            machines_data["machines"].append(new_machine)
-            
-            # حفظ في JSON
-            if save_machines_data(machines_data):
-                # تحديث ملف Excel
-                update_excel_with_machines(machines_data)
-                st.success(f"✅ تم إضافة الماكينة '{machine_name}' بنجاح!")
-                st.balloons()
-                
-                # عرض ملخص
-                with st.expander("📋 ملخص الماكينة المضافة", expanded=True):
-                    st.json(new_machine)
-            else:
-                st.error("❌ فشل في حفظ الماكينة")
-
-def record_maintenance(machine_id, maintenance_type_id):
-    """تسجيل إتمام صيانة"""
-    machines_data = load_machines_data()
-    
-    # البحث عن الماكينة
-    for machine in machines_data["machines"]:
-        if machine["id"] == machine_id:
-            # البحث عن نوع الصيانة
-            for maint in machine.get("next_maintenance", []):
-                if maint["type_id"] == maintenance_type_id:
-                    # تسجيل التاريخ الحالي كآخر صيانة
-                    maint["last_date"] = datetime.now().strftime("%d/%m/%Y")
-                    maint["last_hours"] = machine.get("total_hours", 0)
-                    
-                    # حساب التاريخ التالي
-                    if maint["unit"] in ["أيام", "أسابيع", "شهور", "سنوات"]:
-                        maint["next_date"] = calculate_next_date(
-                            maint["last_date"],
-                            maint["interval"],
-                            maint["unit"]
-                        )
-                    else:
-                        maint["next_hours"] = calculate_next_hours(
-                            maint["last_hours"],
-                            maint["interval"]
-                        )
-                    
-                    # تحديث وقت التعديل
-                    machine["updated_at"] = datetime.now().isoformat()
-                    
-                    # حفظ التغييرات
-                    if save_machines_data(machines_data):
-                        update_excel_with_machines(machines_data)
-                        st.success("✅ تم تسجيل الصيانة بنجاح!")
-                        st.rerun()
-                    break
-            break
-
-def update_machine_hours_ui():
-    """تحديث ساعات تشغيل الماكينة"""
-    st.header("🕐 تحديث ساعات التشغيل")
-    
-    machines_data = load_machines_data()
-    
-    if not machines_data["machines"]:
-        st.info("ℹ️ لا توجد ماكينات مسجلة")
-        return
-    
-    # اختيار الماكينة
-    machine_options = {m["name"]: m["id"] for m in machines_data["machines"]}
-    selected_machine_name = st.selectbox("اختر الماكينة", list(machine_options.keys()))
-    machine_id = machine_options[selected_machine_name]
-    
-    # العثور على الماكينة
-    machine = next((m for m in machines_data["machines"] if m["id"] == machine_id), None)
-    
-    if machine:
-        current_hours = machine.get("total_hours", 0)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            new_hours = st.number_input(
-                "الساعات الجديدة",
-                min_value=float(current_hours),
-                value=float(current_hours) + 8.0,
-                step=1.0
-            )
-        
-        with col2:
-            operation_date = st.date_input("تاريخ التشغيل", datetime.now())
-        
-        if st.button("💾 تحديث الساعات", key="update_hours"):
-            # تحديث ساعات الماكينة
-            machine["total_hours"] = new_hours
-            machine["updated_at"] = datetime.now().isoformat()
-            
-            # تحديث مؤقتات الصيانة بناءً على الساعات الجديدة
-            for maint in machine.get("next_maintenance", []):
-                if maint["unit"] == "ساعات":
-                    maint["remaining"] = calculate_remaining_time(
-                        maint.get("next_date"),
-                        maint.get("next_hours"),
-                        new_hours
-                    )
-            
-            # حفظ التغييرات
-            if save_machines_data(machines_data):
-                update_excel_with_machines(machines_data)
-                st.success(f"✅ تم تحديث ساعات الماكينة إلى {new_hours} ساعة")
-                st.rerun()
-
-def maintenance_management_ui():
-    """إدارة جدول الصيانة"""
-    st.header("📊 إدارة الصيانة")
-    
-    machines_data = load_machines_data()
-    
-    # تبويبات للإدارة
-    maint_tabs = st.tabs(["📅 عرض جميع المؤقتات", "⚙️ تعديل جدول الصيانة", "➕ إضافة نوع صيانة جديد"])
-    
-    with maint_tabs[0]:
-        st.subheader("📅 جدول الصيانة الشامل")
-        
-        if not machines_data["machines"]:
-            st.info("ℹ️ لا توجد ماكينات مسجلة")
-            return
-        
-        # إنشاء جدول شامل للصيانة
-        all_maintenance = []
-        
-        for machine in machines_data["machines"]:
-            for maint in machine.get("next_maintenance", []):
-                remaining = maint.get("remaining", {})
-                
-                all_maintenance.append({
-                    "الماكينة": machine["name"],
-                    "نوع الصيانة": maint["type_name"],
-                    "آخر تاريخ": maint.get("last_date", "غير مسجل"),
-                    "التاريخ التالي": maint.get("next_date", "غير محدد"),
-                    "الساعات التالية": maint.get("next_hours", "غير محدد"),
-                    "المتبقي (أيام)": remaining.get("days", "-"),
-                    "المتبقي (ساعات)": remaining.get("hours", "-"),
-                    "الحالة": remaining.get("status", "normal"),
-                    "معرف الماكينة": machine["id"],
-                    "معرف الصيانة": maint["type_id"]
-                })
-        
-        if all_maintenance:
-            # تحويل إلى DataFrame
-            df = pd.DataFrame(all_maintenance)
-            
-            # فلترة حسب الحالة
-            status_filter = st.multiselect(
-                "فلترة حسب الحالة",
-                ["normal", "warning", "critical", "overdue"],
-                default=["critical", "warning", "overdue"]
-            )
-            
-            if status_filter:
-                df = df[df["الحالة"].isin(status_filter)]
-            
-            # تلوين الصفوف حسب الحالة
-            def color_status(val):
-                color_map = {
-                    "normal": "background-color: #d4edda",
-                    "warning": "background-color: #fff3cd",
-                    "critical": "background-color: #f8d7da",
-                    "overdue": "background-color: #e2e3e5"
-                }
-                return color_map.get(val, "")
-            
-            styled_df = df.style.applymap(color_status, subset=["الحالة"])
-            
-            st.dataframe(styled_df, use_container_width=True, height=400)
-            
-            # خيارات التصدير
-            if st.button("📥 تصدير إلى Excel"):
-                buffer = io.BytesIO()
-                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    df.to_excel(writer, sheet_name='جدول_الصيانة', index=False)
-                
-                st.download_button(
-                    label="💾 تنزيل الملف",
-                    data=buffer.getvalue(),
-                    file_name=f"جدول_الصيانة_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        else:
-            st.info("ℹ️ لا توجد صيانة مجدولة")
-    
-    with maint_tabs[1]:
-        st.subheader("⚙️ تعديل جدول الصيانة")
-        
-        if not machines_data["machines"]:
-            st.info("ℹ️ لا توجد ماكينات مسجلة")
-            return
-        
-        # اختيار الماكينة
-        machine_options = {f"{m['name']} ({m['model']})": m['id'] for m in machines_data["machines"]}
-        selected_machine = st.selectbox("اختر الماكينة", list(machine_options.keys()))
-        machine_id = machine_options[selected_machine]
-        
-        # العثور على الماكينة
-        machine = next((m for m in machines_data["machines"] if m["id"] == machine_id), None)
-        
-        if machine and machine.get("next_maintenance"):
-            st.markdown(f"#### تعديل صيانة: {machine['name']}")
-            
-            for maint in machine["next_maintenance"]:
-                with st.expander(f"{maint['type_name']}", expanded=False):
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        new_last_date = st.text_input(
-                            "آخر تاريخ صيانة",
-                            value=maint.get("last_date", ""),
-                            key=f"last_{machine_id}_{maint['type_id']}"
-                        )
-                        
-                        new_last_hours = st.number_input(
-                            "آخر ساعات صيانة",
-                            value=float(maint.get("last_hours", 0)),
-                            key=f"hours_{machine_id}_{maint['type_id']}"
-                        )
-                    
-                    with col2:
-                        new_interval = st.number_input(
-                            f"الفترة بين الصيانة ({maint['unit']})",
-                            min_value=1,
-                            value=maint["interval"],
-                            key=f"interval_{machine_id}_{maint['type_id']}"
-                        )
-                    
-                    if st.button("💾 حفظ التعديلات", key=f"save_{machine_id}_{maint['type_id']}"):
-                        # تحديث البيانات
-                        maint["last_date"] = new_last_date if new_last_date else None
-                        maint["last_hours"] = new_last_hours
-                        maint["interval"] = new_interval
-                        
-                        # إعادة حساب التواريخ التالية
-                        if maint["unit"] in ["أيام", "أسابيع", "شهور", "سنوات"]:
-                            maint["next_date"] = calculate_next_date(
-                                new_last_date,
-                                new_interval,
-                                maint["unit"]
-                            )
-                        else:
-                            maint["next_hours"] = calculate_next_hours(
-                                new_last_hours,
-                                new_interval
-                            )
-                        
-                        # تحديث وقت التعديل
-                        machine["updated_at"] = datetime.now().isoformat()
-                        
-                        # حفظ التغييرات
-                        if save_machines_data(machines_data):
-                            update_excel_with_machines(machines_data)
-                            st.success(f"✅ تم تحديث {maint['type_name']}")
-                            st.rerun()
-    
-    with maint_tabs[2]:
-        st.subheader("➕ إضافة نوع صيانة جديد")
-        
-        with st.form("add_maintenance_type_form"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                type_name = st.text_input("اسم نوع الصيانة", placeholder="مثال: تنظيف المرشحات")
-                type_id = st.text_input("المعرف (ID)", placeholder="مثال: filter_cleaning")
-            
-            with col2:
-                unit = st.selectbox("وحدة القياس", ["ساعات", "أيام", "أسابيع", "شهور", "سنوات"])
-                default_interval = st.number_input("الفترة الافتراضية", min_value=1, value=100)
-            
-            if st.form_submit_button("💾 إضافة نوع الصيانة"):
-                if not type_name or not type_id:
-                    st.warning("⚠️ الرجاء إدخال الاسم والمعرف")
-                    return
-                
-                # التحقق من عدم تكرار المعرف
-                existing_ids = [t["id"] for t in machines_data["maintenance_types"]]
-                if type_id in existing_ids:
-                    st.error("❌ المعرف موجود مسبقاً")
-                    return
-                
-                # إضافة نوع الصيانة الجديد
-                new_type = {
-                    "id": type_id,
-                    "name": type_name,
-                    "unit": unit,
-                    "default_interval": default_interval
-                }
-                
-                machines_data["maintenance_types"].append(new_type)
-                
-                if save_machines_data(machines_data):
-                    update_excel_with_machines(machines_data)
-                    st.success(f"✅ تم إضافة نوع الصيانة '{type_name}' بنجاح")
-                    st.rerun()
-
-def timers_dashboard_ui():
-    """لوحة المؤقتات التنازلية"""
-    st.header("⏰ المؤقتات التنازلية")
-    
-    machines_data = load_machines_data()
-    
-    if not machines_data["machines"]:
-        st.info("ℹ️ لا توجد ماكينات مسجلة")
-        return
-    
-    # فلترة المؤقتات
-    st.subheader("🔍 فلترة المؤقتات")
-    
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
-    
-    with filter_col1:
-        machine_filter = st.multiselect(
-            "الماكينات",
-            [m["name"] for m in machines_data["machines"]],
-            default=None
-        )
-    
-    with filter_col2:
-        status_filter = st.multiselect(
-            "الحالة",
-            ["normal", "warning", "critical", "overdue"],
-            default=["critical", "warning"]
-        )
-    
-    with filter_col3:
-        type_filter = st.multiselect(
-            "نوع الصيانة",
-            list(set([t["name"] for t in machines_data["maintenance_types"]]))
-        )
-    
-    st.markdown("---")
-    
-    # جمع جميع المؤقتات
-    all_timers = []
-    
-    for machine in machines_data["machines"]:
-        if machine_filter and machine["name"] not in machine_filter:
-            continue
-        
-        for maint in machine.get("next_maintenance", []):
-            if type_filter and maint["type_name"] not in type_filter:
-                continue
-            
-            remaining = maint.get("remaining", {})
-            
-            if status_filter and remaining.get("status") not in status_filter:
-                continue
-            
-            all_timers.append({
-                "machine": machine["name"],
-                "type": maint["type_name"],
-                "remaining": remaining,
-                "next_date": maint.get("next_date"),
-                "next_hours": maint.get("next_hours"),
-                "machine_id": machine["id"],
-                "type_id": maint["type_id"]
-            })
-    
-    # عرض المؤقتات
-    if not all_timers:
-        st.info("ℹ️ لا توجد مؤقتات مطابقة للفلتر")
-        return
-    
-    # ترتيب المؤقتات (الأكثر حراجة أولاً)
-    status_order = {"overdue": 0, "critical": 1, "warning": 2, "normal": 3}
-    all_timers.sort(key=lambda x: status_order.get(x["remaining"].get("status", "normal"), 4))
-    
-    # عرض المؤقتات في أعمدة
-    cols_per_row = 3
-    for i in range(0, len(all_timers), cols_per_row):
-        cols = st.columns(cols_per_row)
-        
-        for j in range(cols_per_row):
-            idx = i + j
-            if idx < len(all_timers):
-                timer = all_timers[idx]
-                remaining = timer["remaining"]
-                status = remaining.get("status", "normal")
-                color = get_status_color(status)
-                
-                with cols[j]:
-                    # بطاقة المؤقت
-                    with st.container():
-                        st.markdown(f"""
-                        <div style="border: 2px solid {color}; border-radius: 10px; padding: 15px; margin: 10px 0;">
-                            <h4 style="color: {color}; margin: 0;">{timer['machine']}</h4>
-                            <p style="margin: 5px 0;"><strong>{timer['type']}</strong></p>
-                        """, unsafe_allow_html=True)
-                        
-                        # عرض الوقت المتبقي
-                        if remaining.get("days") is not None:
-                            days = remaining["days"]
-                            if days < 0:
-                                st.markdown(f"<p style='color: {color};'><strong>متأخر: {abs(days)} يوم</strong></p>", unsafe_allow_html=True)
-                            else:
-                                st.markdown(f"<p style='color: {color};'><strong>متبقي: {days} يوم</strong></p>", unsafe_allow_html=True)
-                        
-                        elif remaining.get("hours") is not None:
-                            hours = remaining["hours"]
-                            if hours < 0:
-                                st.markdown(f"<p style='color: {color};'><strong>متأخر: {abs(hours):.0f} ساعة</strong></p>", unsafe_allow_html=True)
-                            else:
-                                st.markdown(f"<p style='color: {color};'><strong>متبقي: {hours:.0f} ساعة</strong></p>", unsafe_allow_html=True)
-                        
-                        # التاريخ التالي
-                        if timer["next_date"]:
-                            st.markdown(f"<p>التاريخ التالي: {timer['next_date']}</p>", unsafe_allow_html=True)
-                        
-                        # شريط التقدم
-                        if remaining.get("percentage") is not None:
-                            st.progress(remaining["percentage"] / 100)
-                        
-                        st.markdown("</div>", unsafe_allow_html=True)
-                        
-                        # زر تسجيل الإنجاز
-                        if st.button("✅ تمت الصيانة", key=f"done_timer_{timer['machine_id']}_{timer['type_id']}"):
-                            record_maintenance(timer["machine_id"], timer["type_id"])
-    
-    # إحصائيات المؤقتات
-    st.markdown("---")
-    st.subheader("📊 إحصائيات المؤقتات")
-    
-    status_counts = {"normal": 0, "warning": 0, "critical": 0, "overdue": 0}
-    for timer in all_timers:
-        status = timer["remaining"].get("status", "normal")
-        status_counts[status] = status_counts.get(status, 0) + 1
-    
-    # عرض جدول الإحصائيات
-    stats_df = pd.DataFrame({
-        "الحالة": list(status_counts.keys()),
-        "العدد": list(status_counts.values()),
-        "النسبة": [f"{(count/len(all_timers)*100):.1f}%" for count in status_counts.values()]
-    })
-    
-    st.dataframe(stats_df, use_container_width=True)
-
-def reports_ui():
-    """التقارير والإحصائيات"""
-    st.header("📈 التقارير والإحصائيات")
-    
-    machines_data = load_machines_data()
-    
-    if not machines_data["machines"]:
-        st.info("ℹ️ لا توجد بيانات لتوليد التقارير")
-        return
-    
-    # تبويبات التقارير
-    report_tabs = st.tabs(["📊 إحصائيات عامة", "📅 تقرير الصيانة", "📉 تحليل الأداء", "📄 تصدير التقارير"])
-    
-    with report_tabs[0]:
-        st.subheader("📊 إحصائيات النظام")
-        
-        # إحصائيات عامة
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # حساب إجمالي ساعات التشغيل
-            total_hours = sum(m.get("total_hours", 0) for m in machines_data["machines"])
-            st.metric("🕐 إجمالي ساعات التشغيل", f"{total_hours:,} ساعة")
-            
-            # متوسط ساعات التشغيل
-            avg_hours = total_hours / len(machines_data["machines"]) if machines_data["machines"] else 0
-            st.metric("📊 متوسط الساعات", f"{avg_hours:,.0f} ساعة")
-            
-            # عدد أنواع الصيانة
-            maint_types_count = len(machines_data["maintenance_types"])
-            st.metric("⚙️ أنواع الصيانة", maint_types_count)
-        
-        with col2:
-            # توزيع الماكينات حسب الموقع
-            locations = {}
-            for machine in machines_data["machines"]:
-                loc = machine.get("location", "غير محدد")
-                locations[loc] = locations.get(loc, 0) + 1
-            
-            st.markdown("#### 🗺️ توزيع الماكينات حسب الموقع")
-            for loc, count in locations.items():
-                st.markdown(f"**{loc}:** {count} ماكينة")
-        
-        # مخطط أعمدة بسيط لتوزيع الماكينات
-        if machines_data["machines"]:
-            location_counts = {}
-            for machine in machines_data["machines"]:
-                loc = machine.get("location", "غير محدد")
-                location_counts[loc] = location_counts.get(loc, 0) + 1
-            
-            # عرض كجدول
-            location_df = pd.DataFrame({
-                "الموقع": list(location_counts.keys()),
-                "عدد الماكينات": list(location_counts.values())
-            })
-            
-            st.dataframe(location_df, use_container_width=True)
-    
-    with report_tabs[1]:
-        st.subheader("📅 تقرير الصيانة الشهري")
-        
-        # فلترة حسب الشهر
-        current_year = datetime.now().year
-        year = st.selectbox("السنة", range(current_year-5, current_year+1), index=5)
-        month = st.selectbox("الشهر", range(1, 13), index=datetime.now().month-1)
-        
-        # جمع بيانات الصيانة للشهر المحدد
-        monthly_maintenance = []
-        
-        for machine in machines_data["machines"]:
-            for maint in machine.get("next_maintenance", []):
-                next_date = maint.get("next_date")
-                if next_date:
-                    try:
-                        maint_date = pd.to_datetime(next_date, dayfirst=True)
-                        if maint_date.year == year and maint_date.month == month:
-                            monthly_maintenance.append({
-                                "الماكينة": machine["name"],
-                                "نوع الصيانة": maint["type_name"],
-                                "التاريخ المخطط": next_date,
-                                "الحالة": maint.get("remaining", {}).get("status", "normal"),
-                                "المكان": machine.get("location", "غير محدد")
-                            })
-                    except:
-                        pass
-        
-        if monthly_maintenance:
-            monthly_df = pd.DataFrame(monthly_maintenance)
-            
-            # توزيع الصيانة حسب النوع
-            type_counts = monthly_df["نوع الصيانة"].value_counts()
-            
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                st.dataframe(monthly_df, use_container_width=True, height=300)
-            
-            with col2:
-                st.markdown("#### 📊 توزيع الصيانة")
-                for type_name, count in type_counts.items():
-                    st.markdown(f"**{type_name}:** {count}")
-        else:
-            st.info(f"ℹ️ لا توجد صيانة مجدولة لشهر {month}/{year}")
-    
-    with report_tabs[2]:
-        st.subheader("📉 تحليل أداء الصيانة")
-        
-        # حساب نسبة التزام الصيانة
-        total_scheduled = 0
-        total_on_time = 0
-        total_delayed = 0
-        
-        for machine in machines_data["machines"]:
-            for maint in machine.get("next_maintenance", []):
-                total_scheduled += 1
-                status = maint.get("remaining", {}).get("status", "normal")
-                
-                if status == "overdue":
-                    total_delayed += 1
-                else:
-                    total_on_time += 1
-        
-        if total_scheduled > 0:
-            on_time_percentage = (total_on_time / total_scheduled) * 100
-            delayed_percentage = (total_delayed / total_scheduled) * 100
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("📅 مجدول", total_scheduled)
-            
-            with col2:
-                st.metric("✅ في الوقت", f"{on_time_percentage:.1f}%")
-            
-            with col3:
-                st.metric("⏰ متأخر", f"{delayed_percentage:.1f}%")
-    
-    with report_tabs[3]:
-        st.subheader("📄 تصدير التقارير")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            report_type = st.selectbox(
-                "نوع التقرير",
-                ["تقرير الماكينات", "جدول الصيانة", "تقرير المؤقتات", "التقرير الشامل"]
-            )
-        
-        with col2:
-            format_type = st.radio("التنسيق", ["Excel", "CSV"])
-        
-        if st.button("🚀 إنشاء وتصدير التقرير", type="primary"):
-            with st.spinner("جاري إنشاء التقرير..."):
-                # إنشاء DataFrame بناءً على نوع التقرير
-                if report_type == "تقرير الماكينات":
-                    data = []
-                    for machine in machines_data["machines"]:
-                        data.append({
-                            "اسم الماكينة": machine["name"],
-                            "الموديل": machine.get("model", ""),
-                            "الرقم المسلسل": machine.get("serial_number", ""),
-                            "المكان": machine.get("location", ""),
-                            "تاريخ التركيب": machine.get("installation_date", ""),
-                            "ساعات التشغيل": machine.get("total_hours", 0),
-                            "الحالة": machine.get("status", ""),
-                            "عدد أنواع الصيانة": len(machine.get("next_maintenance", []))
-                        })
-                    
-                    df = pd.DataFrame(data)
-                
-                elif report_type == "جدول الصيانة":
-                    data = []
-                    for machine in machines_data["machines"]:
-                        for maint in machine.get("next_maintenance", []):
-                            remaining = maint.get("remaining", {})
-                            data.append({
-                                "الماكينة": machine["name"],
-                                "نوع الصيانة": maint["type_name"],
-                                "آخر تاريخ": maint.get("last_date", ""),
-                                "التاريخ التالي": maint.get("next_date", ""),
-                                "الساعات التالية": maint.get("next_hours", ""),
-                                "المتبقي (أيام)": remaining.get("days", ""),
-                                "المتبقي (ساعات)": remaining.get("hours", ""),
-                                "الحالة": remaining.get("status", ""),
-                                "الفترة": f"{maint['interval']} {maint['unit']}"
-                            })
-                    
-                    df = pd.DataFrame(data)
-                
-                elif report_type == "تقرير المؤقتات":
-                    data = []
-                    for machine in machines_data["machines"]:
-                        for maint in machine.get("next_maintenance", []):
-                            remaining = maint.get("remaining", {})
-                            data.append({
-                                "الماكينة": machine["name"],
-                                "نوع الصيانة": maint["type_name"],
-                                "حالة المؤقت": remaining.get("status", ""),
-                                "نسبة الإنجاز": f"{remaining.get('percentage', 0):.1f}%",
-                                "ملاحظات": "🔴 تحتاج صيانة عاجلة" if remaining.get("status") == "critical" else
-                                          "🟡 تحتاج صيانة قريباً" if remaining.get("status") == "warning" else
-                                          "🟢 تحت السيطرة" if remaining.get("status") == "normal" else
-                                          "⚫ متأخرة"
-                            })
-                    
-                    df = pd.DataFrame(data)
-                
-                else:  # التقرير الشامل
-                    # سيتضمن جميع البيانات
-                    df_machines = pd.DataFrame([{
-                        "اسم الماكينة": m["name"],
-                        "الموديل": m.get("model", ""),
-                        "الرقم المسلسل": m.get("serial_number", ""),
-                        "المكان": m.get("location", ""),
-                        "ساعات التشغيل": m.get("total_hours", 0),
-                        "الحالة": m.get("status", "")
-                    } for m in machines_data["machines"]])
-                    
-                    # إنشاء ملف Excel متعدد الأوراق
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                        # ورقة الماكينات
-                        df_machines.to_excel(writer, sheet_name='الماكينات', index=False)
-                        
-                        # ورقة الصيانة
-                        maint_data = []
-                        for machine in machines_data["machines"]:
-                            for maint in machine.get("next_maintenance", []):
-                                maint_data.append({
-                                    "الماكينة": machine["name"],
-                                    "نوع الصيانة": maint["type_name"],
-                                    "التاريخ التالي": maint.get("next_date", ""),
-                                    "الحالة": maint.get("remaining", {}).get("status", "")
-                                })
-                        
-                        maint_df = pd.DataFrame(maint_data)
-                        maint_df.to_excel(writer, sheet_name='الصيانة', index=False)
-                        
-                        # ورقة الإحصائيات
-                        stats_data = {
-                            "المعيار": ["عدد الماكينات", "إجمالي ساعات التشغيل", "عدد أنواع الصيانة", "تاريخ التقرير"],
-                            "القيمة": [
-                                len(machines_data["machines"]),
-                                sum(m.get("total_hours", 0) for m in machines_data["machines"]),
-                                len(machines_data["maintenance_types"]),
-                                datetime.now().strftime("%d/%m/%Y %H:%M")
-                            ]
-                        }
-                        
-                        stats_df = pd.DataFrame(stats_data)
-                        stats_df.to_excel(writer, sheet_name='الإحصائيات', index=False)
-                    
-                    file_data = buffer.getvalue()
-                    file_name = f"التقرير_الشامل_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
-                    mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                
-                if report_type != "التقرير الشامل":
-                    if format_type == "Excel":
-                        buffer = io.BytesIO()
-                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                            df.to_excel(writer, index=False, sheet_name='تقرير')
-                        file_data = buffer.getvalue()
-                        file_name = f"{report_type}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
-                        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    
-                    elif format_type == "CSV":
-                        file_data = df.to_csv(index=False, encoding='utf-8-sig')
-                        file_name = f"{report_type}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
-                        mime_type = "text/csv"
-                
-                # زر التحميل
-                st.download_button(
-                    label="📥 تنزيل التقرير",
-                    data=file_data,
-                    file_name=file_name,
-                    mime=mime_type
-                )
-                
-                st.success("✅ تم إنشاء التقرير بنجاح!")
-
-def update_excel_with_machines(machines_data):
-    """تحديث ملف Excel ببيانات الماكينات"""
-    try:
-        # إنشاء DataFrames
-        machines_list = []
-        maintenance_list = []
-        
-        for machine in machines_data["machines"]:
-            # بيانات الماكينة الأساسية
-            machines_list.append({
-                "machine_id": machine["id"],
-                "name": machine["name"],
-                "model": machine.get("model", ""),
-                "serial_number": machine.get("serial_number", ""),
-                "location": machine.get("location", ""),
-                "installation_date": machine.get("installation_date", ""),
-                "total_hours": machine.get("total_hours", 0),
-                "status": machine.get("status", "active"),
-                "notes": machine.get("notes", ""),
-                "created_at": machine.get("created_at", ""),
-                "updated_at": machine.get("updated_at", "")
-            })
-            
-            # بيانات الصيانة
-            for maint in machine.get("next_maintenance", []):
-                maintenance_list.append({
-                    "maintenance_id": f"{machine['id']}_{maint['type_id']}",
-                    "machine_id": machine["id"],
-                    "machine_name": machine["name"],
-                    "maintenance_type": maint["type_name"],
-                    "maintenance_type_id": maint["type_id"],
-                    "last_date": maint.get("last_date", ""),
-                    "last_hours": maint.get("last_hours", 0),
-                    "next_date": maint.get("next_date", ""),
-                    "next_hours": maint.get("next_hours", 0),
-                    "interval": maint["interval"],
-                    "interval_unit": maint["unit"],
-                    "status": maint.get("remaining", {}).get("status", "normal"),
-                    "remaining_days": maint.get("remaining", {}).get("days", 0),
-                    "remaining_hours": maint.get("remaining", {}).get("hours", 0),
-                    "updated_at": machine.get("updated_at", "")
-                })
-        
-        # إنشاء DataFrames
-        df_machines = pd.DataFrame(machines_list)
-        df_maintenance = pd.DataFrame(maintenance_list)
-        
-        # أنواع الصيانة
-        df_types = pd.DataFrame(machines_data["maintenance_types"])
-        
-        # حفظ في ملف Excel
-        sheets_dict = {
-            "Machines": df_machines,
-            "Maintenance_Schedule": df_maintenance,
-            "Maintenance_Types": df_types
-        }
-        
-        # استخدام دالة الحفظ المشتركة
-        username = st.session_state.get("username", "System")
-        save_local_excel_and_push(
-            sheets_dict,
-            f"تحديث بيانات الصيانة بواسطة {username} - {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-        )
-        
-        return True
-    
-    except Exception as e:
-        st.error(f"❌ خطأ في تحديث ملف Excel: {e}")
-        return False
-
-def settings_ui():
-    """إعدادات النظام"""
-    st.header("⚙️ إعدادات النظام")
-    
-    machines_data = load_machines_data()
-    settings = machines_data.get("settings", {})
-    
-    # قسم إعدادات المؤقتات
-    st.subheader("⚙️ إعدادات المؤقتات")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        warning_days = st.number_input(
-            "الأيام للإشعار التحذيري",
-            min_value=1,
-            value=settings.get("warning_days", APP_CONFIG["WARNING_DAYS_BEFORE"]),
-            help="عدد الأيام قبل موعد الصيانة لتغيير الحالة إلى تحذير"
-        )
-    
-    with col2:
-        critical_days = st.number_input(
-            "الأيام للإشعار الحرج",
-            min_value=1,
-            value=settings.get("critical_days", APP_CONFIG["CRITICAL_DAYS_BEFORE"]),
-            help="عدد الأيام قبل موعد الصيانة لتغيير الحالة إلى حرج"
-        )
-    
-    # زر حفظ الإعدادات
-    if st.button("💾 حفظ الإعدادات", key="save_settings", type="primary"):
-        machines_data["settings"] = {
-            "warning_days": warning_days,
-            "critical_days": critical_days
-        }
-        
-        if save_machines_data(machines_data):
-            st.success("✅ تم حفظ الإعدادات بنجاح!")
-            st.rerun()
-    
-    st.markdown("---")
-    
-    # قسم إدارة البيانات
-    st.subheader("🔄 إدارة البيانات")
-    
-    col_data1, col_data2 = st.columns(2)
-    
-    with col_data1:
-        if st.button("🔄 تحديث جميع المؤقتات", key="refresh_all_timers"):
-            # إعادة حساب جميع المؤقتات
-            for machine in machines_data["machines"]:
-                for maint in machine.get("next_maintenance", []):
-                    maint["remaining"] = calculate_remaining_time(
-                        maint.get("next_date"),
-                        maint.get("next_hours"),
-                        machine.get("total_hours", 0)
-                    )
-            
-            if save_machines_data(machines_data):
-                update_excel_with_machines(machines_data)
-                st.success("✅ تم تحديث جميع المؤقتات!")
-                st.rerun()
-    
-    with col_data2:
-        if st.button("🗑️ حذف جميع البيانات", key="delete_all_data"):
-            if st.checkbox("أؤكد أنني أريد حذف جميع البيانات", key="confirm_delete_all"):
-                machines_data["machines"] = []
-                if save_machines_data(machines_data):
-                    update_excel_with_machines(machines_data)
-                    st.warning("⚠️ تم حذف جميع البيانات بنجاح!")
-                    st.rerun()
-    
-    st.markdown("---")
-    
-    # قسم النسخ الاحتياطي
-    st.subheader("💾 النسخ الاحتياطي")
-    
-    col_backup1, col_backup2 = st.columns(2)
-    
-    with col_backup1:
-        if st.button("📥 تنزيل نسخة احتياطية", key="backup_download"):
-            # تنزيل ملف JSON
-            backup_data = json.dumps(machines_data, indent=4, ensure_ascii=False)
-            
-            st.download_button(
-                label="💾 تحميل ملف النسخ الاحتياطي",
-                data=backup_data,
-                file_name=f"maintenance_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
-                mime="application/json"
-            )
-    
-    with col_backup2:
-        uploaded_file = st.file_uploader("استعادة من نسخة احتياطية", type=["json"])
-        
-        if uploaded_file is not None:
-            if st.button("🔄 استعادة البيانات", key="restore_backup"):
-                try:
-                    restored_data = json.load(uploaded_file)
-                    
-                    if "machines" in restored_data and "maintenance_types" in restored_data:
-                        if save_machines_data(restored_data):
-                            update_excel_with_machines(restored_data)
-                            st.success("✅ تم استعادة البيانات بنجاح!")
-                            st.rerun()
-                    else:
-                        st.error("❌ ملف النسخ الاحتياطي غير صالح")
-                except Exception as e:
-                    st.error(f"❌ خطأ في استعادة البيانات: {e}")
-    
-    st.markdown("---")
-    
-    # قسم معلومات النظام
-    st.subheader("ℹ️ معلومات النظام")
-    
-    info_col1, info_col2 = st.columns(2)
-    
-    with info_col1:
-        st.info(f"**عدد الماكينات:** {len(machines_data['machines'])}")
-        st.info(f"**أنواع الصيانة:** {len(machines_data['maintenance_types'])}")
-    
-    with info_col2:
-        if os.path.exists(APP_CONFIG["LOCAL_FILE"]):
-            file_size = os.path.getsize(APP_CONFIG["LOCAL_FILE"]) / 1024  # بالكيلوبايت
-            st.info(f"**حجم ملف Excel:** {file_size:.1f} KB")
-        else:
-            st.info("**حجم ملف Excel:** غير موجود")
-        
-        # عرض حالة GitHub Token
-        token_exists = bool(st.secrets.get("github", {}).get("token", None))
-        if token_exists:
-            st.success("🔑 **GitHub Token:** متوفر")
-        else:
-            st.warning("🔑 **GitHub Token:** غير متوفر")
-
-# ===============================
-# 🔐 تسجيل الدخول
-# ===============================
-def login_ui():
-    """واجهة تسجيل الدخول"""
-    st.title(f"{APP_CONFIG['APP_ICON']} تسجيل الدخول - {APP_CONFIG['APP_TITLE']}")
-    
-    users = load_users()
+def logout_action():
     state = load_state()
-    
+    username = st.session_state.get("username")
+    if username and username in state:
+        state[username]["active"] = False
+        state[username].pop("login_time", None)
+        save_state(state)
+    for k in list(st.session_state.keys()):
+        st.session_state.pop(k, None)
+    st.rerun()
+
+def login_ui():
+    users = load_users()
+    state = cleanup_sessions(load_state())
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
-    
+
+    st.title(f"{APP_CONFIG['APP_ICON']} تسجيل الدخول - {APP_CONFIG['APP_TITLE']}")
+    username_input = st.selectbox("اختر المستخدم", list(users.keys()))
+    password = st.text_input("كلمة المرور", type="password")
+    active_users = [u for u, v in state.items() if v.get("active")]
+    active_count = len(active_users)
+    st.caption(f"المستخدمون النشطون: {active_count}/{MAX_ACTIVE_USERS}")
+
     if not st.session_state.logged_in:
-        col1, col2 = st.columns([1, 2])
-        
+        if st.button("تسجيل الدخول"):
+            if username_input in users and users[username_input]["password"] == password:
+                if username_input == "admin":
+                    pass
+                elif username_input in active_users:
+                    st.warning("هذا المستخدم مسجل دخول بالفعل")
+                    return False
+                elif active_count >= MAX_ACTIVE_USERS:
+                    st.error("الحد الأقصى للمستخدمين المتصلين")
+                    return False
+                state[username_input] = {"active": True, "login_time": datetime.now().isoformat()}
+                save_state(state)
+                st.session_state.logged_in = True
+                st.session_state.username = username_input
+                st.session_state.user_role = users[username_input].get("role", "viewer")
+                st.session_state.user_permissions = users[username_input].get("permissions", {"all_sections": False})
+                st.success(f"مرحباً {username_input}")
+                st.rerun()
+            else:
+                st.error("كلمة المرور غير صحيحة")
+        return False
+    else:
+        username = st.session_state.username
+        role = st.session_state.user_role
+        st.success(f"مسجل كـ {username} ({role})")
+        rem = remaining_time(state, username)
+        if rem:
+            mins, secs = divmod(int(rem.total_seconds()), 60)
+            st.info(f"الوقت المتبقي: {mins:02d}:{secs:02d}")
+        else:
+            st.warning("انتهت الجلسة")
+            logout_action()
+        if st.button("تسجيل الخروج"):
+            logout_action()
+        return True
+
+# ---------- دوال الصلاحيات (للتطابق مع بنية الأقسام) ----------
+def get_user_permissions_dict(username):
+    """إرجاع صلاحيات المستخدم (متوافق مع بنية الأقسام)"""
+    users = load_users()
+    if username not in users:
+        return {"all_sections": False, "sections_permissions": {}}
+    user_data = users[username]
+    perms = user_data.get("permissions", {})
+    if isinstance(perms, list):
+        if "all" in perms:
+            perms = {"all_sections": True}
+        else:
+            perms = {"all_sections": False}
+    if "sections_permissions" not in user_data:
+        user_data["sections_permissions"] = {}
+    return {
+        "all_sections": perms.get("all_sections", False),
+        "sections_permissions": user_data.get("sections_permissions", {})
+    }
+
+def is_admin(username):
+    return username == "admin" or load_users().get(username, {}).get("role") == "admin"
+
+# ---------- دوال GitHub والبيانات ----------
+def fetch_from_github_requests():
+    try:
+        response = requests.get(GITHUB_EXCEL_URL, stream=True, timeout=15)
+        response.raise_for_status()
+        with open(APP_CONFIG["LOCAL_FILE"], "wb") as f:
+            shutil.copyfileobj(response.raw, f)
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"فشل التحديث: {e}")
+        return False
+
+@st.cache_data(show_spinner=False)
+def load_cotton_data():
+    if not os.path.exists(APP_CONFIG["LOCAL_FILE"]):
+        create_new_cotton_file()
+        return pd.DataFrame()
+    try:
+        df = pd.read_excel(APP_CONFIG["LOCAL_FILE"])
+        required_cols = ['التاريخ', 'الوقت', 'الوردية', 'المشرف', 'نوع البالة', 'وزن البالة', 'ملاحظات']
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = ""
+        return df
+    except Exception as e:
+        st.error(f"خطأ في تحميل البيانات: {e}")
+        return pd.DataFrame()
+
+def create_new_cotton_file():
+    try:
+        cols = ['التاريخ', 'الوقت', 'الوردية', 'المشرف', 'نوع البالة', 'وزن البالة', 'ملاحظات']
+        df = pd.DataFrame(columns=cols)
+        df.to_excel(APP_CONFIG["LOCAL_FILE"], index=False)
+        return True
+    except Exception as e:
+        st.error(f"خطأ في إنشاء الملف: {e}")
+        return False
+
+def save_cotton_data(df, commit_message="تحديث"):
+    try:
+        df.to_excel(APP_CONFIG["LOCAL_FILE"], index=False)
+        st.cache_data.clear()
+        token = st.secrets.get("github", {}).get("token", None)
+        if token and GITHUB_AVAILABLE:
+            try:
+                g = Github(token)
+                repo = g.get_repo(APP_CONFIG["REPO_NAME"])
+                with open(APP_CONFIG["LOCAL_FILE"], "rb") as f:
+                    content = f.read()
+                try:
+                    contents = repo.get_contents(APP_CONFIG["FILE_PATH"], ref=APP_CONFIG["BRANCH"])
+                    repo.update_file(APP_CONFIG["FILE_PATH"], commit_message, content, contents.sha, branch=APP_CONFIG["BRANCH"])
+                    st.success("تم الحفظ والرفع إلى GitHub")
+                except:
+                    repo.create_file(APP_CONFIG["FILE_PATH"], commit_message, content, branch=APP_CONFIG["BRANCH"])
+                    st.success("تم إنشاء الملف على GitHub")
+            except Exception as e:
+                st.warning(f"تم الحفظ محلياً فقط: {e}")
+        return True
+    except Exception as e:
+        st.error(f"خطأ في الحفظ: {e}")
+        return False
+
+# ---------- دوال النظام الأساسية ----------
+def get_current_shift():
+    now = datetime.now()
+    h = now.hour
+    for name, times in APP_CONFIG["SHIFTS"].items():
+        if times["start"] <= h < times["end"]:
+            return name
+    return "الثالثه"
+
+def get_supervisors():
+    return ["انسT.A", "عبدالحميدT.B", "محمود فتحيT.C", "احمد عبالعزيزT.D"]
+
+def get_bale_types():
+    return ["قماش", "تراب", "هبوه دست", "اسطبات تدویر", "برم", "برم انفاق", "بلاستيك",
+            "هبوه تنظيف", "انفاق", "شرق الغزل", "تمشيط غير مغلف", "تمشيط مغلف", "مكس", "كرد", "قطن خام", "ملح"]
+
+def add_new_record(df, supervisor, bale_type, weight, notes=""):
+    now = datetime.now()
+    new = {
+        'التاريخ': now.date(),
+        'الوقت': now.time(),
+        'الوردية': get_current_shift(),
+        'المشرف': supervisor,
+        'نوع البالة': bale_type,
+        'وزن البالة': weight,
+        'ملاحظات': notes
+    }
+    return new, pd.concat([df, pd.DataFrame([new])], ignore_index=True)
+
+def generate_statistics(df, start_date, end_date):
+    if df.empty:
+        return pd.DataFrame()
+    df['التاريخ'] = pd.to_datetime(df['التاريخ']).dt.date
+    mask = (df['التاريخ'] >= start_date) & (df['التاريخ'] <= end_date)
+    fdf = df[mask]
+    if fdf.empty:
+        return pd.DataFrame()
+    stats = fdf.groupby('نوع البالة').agg({
+        'وزن البالة': ['count', 'sum', 'mean'],
+        'المشرف': 'first'
+    }).round(2)
+    stats.columns = ['عدد البالات', 'إجمالي الوزن', 'متوسط الوزن', 'المشرف']
+    return stats.reset_index()
+
+def get_user_permissions(role, perms):
+    """دالة متوافقة مع الإصدار القديم لتبقى الواجهة تعمل"""
+    if isinstance(perms, dict):
+        if perms.get("all_sections", False):
+            return {"can_input": True, "can_view_stats": True}
+        else:
+            # نفحص الدور
+            if role == "admin":
+                return {"can_input": True, "can_view_stats": True}
+            elif role == "data_entry":
+                return {"can_input": True, "can_view_stats": False}
+            else:
+                return {"can_input": False, "can_view_stats": True}
+    else:
+        if "all" in perms:
+            return {"can_input": True, "can_view_stats": True}
+        elif "data_entry" in perms:
+            return {"can_input": True, "can_view_stats": False}
+        elif "view_stats" in perms:
+            return {"can_input": False, "can_view_stats": True}
+        else:
+            return {"can_input": False, "can_view_stats": True}
+
+# ---------- دوال OCR ----------
+def preprocess_image_for_ocr(image_bytes):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    (h,w) = gray.shape
+    scaled = cv2.resize(gray, (w*2, h*2), interpolation=cv2.INTER_CUBIC)
+    denoised = cv2.medianBlur(scaled, 3)
+    thresh = cv2.adaptiveThreshold(denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 2)
+    return thresh
+
+def extract_raw_text_from_image(image_bytes):
+    processed = preprocess_image_for_ocr(image_bytes)
+    if processed is None:
+        return ""
+    config = '--psm 6 -c preserve_interword_spaces=1'
+    text = pytesseract.image_to_string(processed, lang='ara+eng', config=config)
+    return text
+
+def match_bale_type(word, bale_types, cutoff=0.6):
+    if word in bale_types:
+        return word
+    matches = get_close_matches(word, bale_types, n=1, cutoff=cutoff)
+    if matches:
+        return matches[0]
+    for bt in bale_types:
+        if bt in word or word in bt:
+            return bt
+    return None
+
+def extract_time_from_text(text):
+    patterns = [
+        r'\b([01]?[0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?\b',
+        r'\b(\d{1,2}:\d{2})\b'
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            time_str = match.group(0)
+            if len(time_str.split(':')[0]) == 1:
+                time_str = '0' + time_str
+            return time_str
+    return None
+
+def parse_edited_text_to_table(edited_text):
+    """يحول النص الذي قام المستخدم بتحريره إلى جدول"""
+    lines = edited_text.split('\n')
+    bale_types = get_bale_types()
+    rows = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        numbers = re.findall(r'\b(\d+(?:\.\d+)?)\b', line)
+        weight = None
+        for num in numbers:
+            val = float(num)
+            if 0.5 <= val <= 5000:
+                weight = val
+                break
+        if weight is None:
+            continue
+        extracted_time = extract_time_from_text(line)
+        if extracted_time:
+            try:
+                record_time = datetime.strptime(extracted_time, '%H:%M').time()
+            except:
+                record_time = datetime.now().time()
+        else:
+            record_time = datetime.now().time()
+        # إزالة الوزن والوقت للحصول على النوع
+        line_cleaned = line
+        line_cleaned = re.sub(r'\b' + re.escape(str(weight)) + r'\b', '', line_cleaned)
+        if extracted_time:
+            line_cleaned = re.sub(r'\b' + re.escape(extracted_time) + r'\b', '', line_cleaned)
+        line_cleaned = re.sub(r'\s*(?:kg|كجم|كغ)\s*', ' ', line_cleaned, flags=re.I)
+        words = re.findall(r'[\u0600-\u06FFa-zA-Z]+', line_cleaned)
+        bale_type = None
+        for w in words:
+            matched = match_bale_type(w, bale_types)
+            if matched:
+                bale_type = matched
+                break
+        if not bale_type and words:
+            bale_type = words[0]
+        else:
+            bale_type = "غير محدد"
+        rows.append({
+            'نوع البالة': bale_type,
+            'وزن البالة': weight,
+            'التاريخ': datetime.now().date(),
+            'الوقت': record_time
+        })
+    return rows
+
+# ---------- تبويب إدارة المستخدمين (خاص بالمدير) ----------
+def admin_users_management_tab():
+    st.header("👥 إدارة المستخدمين والصلاحيات")
+    st.info("هنا يمكنك إضافة، تعديل، أو حذف المستخدمين وتحديد صلاحياتهم.")
+
+    users = load_users()
+
+    # عرض المستخدمين الحاليين
+    st.subheader("📋 قائمة المستخدمين")
+    for username, info in users.items():
+        with st.expander(f"👤 {username} (الدور: {info.get('role', 'viewer')})"):
+            col1, col2 = st.columns(2)
+
+            # تغيير كلمة المرور
+            with col1:
+                new_password = st.text_input(f"كلمة المرور الجديدة", type="password", key=f"pass_{username}")
+                if new_password:
+                    if st.button(f"🔐 تغيير كلمة المرور", key=f"change_pass_{username}"):
+                        users[username]["password"] = new_password
+                        if save_users(users):
+                            st.success(f"✅ تم تغيير كلمة مرور {username}")
+                            st.rerun()
+                        else:
+                            st.error("❌ فشل حفظ التغييرات")
+
+            # تغيير الدور
+            with col2:
+                current_role = info.get("role", "viewer")
+                role_options = ["admin", "data_entry", "viewer"]
+                new_role = st.selectbox(f"الدور", role_options, index=role_options.index(current_role), key=f"role_{username}")
+                if new_role != info.get("role"):
+                    users[username]["role"] = new_role
+                    # تحديث الصلاحيات تبعاً للدور
+                    if new_role == "admin":
+                        users[username]["permissions"] = {"all_sections": True}
+                    else:
+                        users[username]["permissions"] = {"all_sections": False}
+                    if save_users(users):
+                        st.success(f"✅ تم تغيير دور {username} إلى {new_role}")
+                        st.rerun()
+
+            # حذف المستخدم (ما عدا admin)
+            if username != "admin":
+                st.markdown("---")
+                if st.button(f"🗑️ حذف المستخدم {username}", key=f"delete_{username}"):
+                    confirm = st.text_input(f"تأكيد الحذف - اكتب YES", key=f"confirm_{username}")
+                    if confirm == "YES":
+                        del users[username]
+                        if save_users(users):
+                            st.success(f"✅ تم حذف {username}")
+                            st.rerun()
+                        else:
+                            st.error("❌ فشل الحذف")
+
+    # إضافة مستخدم جديد
+    st.markdown("---")
+    st.subheader("➕ إضافة مستخدم جديد")
+    with st.form("add_user_form"):
+        col1, col2 = st.columns(2)
         with col1:
-            st.image("https://cdn-icons-png.flaticon.com/512/3067/3067256.png", width=100)
-        
+            new_username = st.text_input("اسم المستخدم (حروف إنجليزية أو أرقام فقط)")
+            new_password = st.text_input("كلمة المرور", type="password")
         with col2:
-            username = st.text_input("👤 اسم المستخدم")
-            password = st.text_input("🔑 كلمة المرور", type="password")
-            
-            if st.button("🚀 تسجيل الدخول", type="primary", use_container_width=True):
-                if username in users and users[username]["password"] == password:
-                    # تحديث حالة الجلسة
-                    state[username] = {
-                        "active": True,
-                        "login_time": datetime.now().isoformat()
-                    }
-                    save_state(state)
-                    
-                    st.session_state.logged_in = True
-                    st.session_state.username = username
-                    st.session_state.user_role = users[username].get("role", "user")
-                    
-                    st.success(f"✅ مرحباً {username}!")
+            new_role = st.selectbox("الدور الافتراضي", ["viewer", "data_entry", "admin"])
+
+        submitted = st.form_submit_button("➕ إضافة المستخدم", type="primary")
+        if submitted:
+            if not new_username or not new_password:
+                st.error("❌ اسم المستخدم وكلمة المرور مطلوبة")
+            elif new_username in users:
+                st.error(f"❌ المستخدم '{new_username}' موجود بالفعل")
+            elif not new_username.replace("_", "").isalnum():
+                st.error("❌ اسم المستخدم يجب أن يحتوي على حروف إنجليزية أو أرقام فقط")
+            else:
+                users[new_username] = {
+                    "password": new_password,
+                    "role": new_role,
+                    "created_at": datetime.now().isoformat(),
+                    "permissions": {"all_sections": True} if new_role == "admin" else {"all_sections": False},
+                    "sections_permissions": {}
+                }
+                if save_users(users):
+                    st.success(f"✅ تم إضافة المستخدم {new_username}")
+                    st.balloons()
                     st.rerun()
                 else:
-                    st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة")
-    
-    else:
-        # شريط معلومات الجلسة
-        st.success(f"✅ مسجل الدخول كـ: {st.session_state.username}")
-        
-        if st.button("🚪 تسجيل الخروج", key="logout_main"):
-            state[st.session_state.username]["active"] = False
-            save_state(state)
-            
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            
-            st.rerun()
-        
-        return True
-    
-    return False
+                    st.error("❌ فشل حفظ المستخدم الجديد")
 
 # ===============================
-# 🖥 الواجهة الرئيسية
+# الواجهة الرئيسية
 # ===============================
-def main():
-    """الواجهة الرئيسية للتطبيق"""
-    
-    # إعداد الصفحة
-    st.set_page_config(
-        page_title=APP_CONFIG["APP_TITLE"],
-        page_icon="⚙️",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    
-    # تهيئة ملف Excel إذا لم يكن موجوداً
-    initialize_excel_file()
-    
-    # التحقق من تسجيل الدخول
+st.set_page_config(page_title=APP_CONFIG["APP_TITLE"], layout="wide")
+
+with st.sidebar:
+    st.header("الجلسة")
     if not st.session_state.get("logged_in"):
-        if login_ui():
-            st.rerun()
-        else:
+        if not login_ui():
             st.stop()
-    
-    # الشريط الجانبي
-    with st.sidebar:
-        st.header(f"{APP_CONFIG['APP_ICON']} {APP_CONFIG['APP_TITLE']}")
-        
-        # معلومات المستخدم
-        st.markdown(f"""
-        **👤 المستخدم:** {st.session_state.username}
-        **🎭 الدور:** {st.session_state.user_role}
-        """)
-        
-        st.markdown("---")
-        
-        # أدوات سريعة
-        st.subheader("🛠️ أدوات سريعة")
-        
-        if st.button("🔄 تحديث البيانات من GitHub", key="refresh_github_sidebar"):
-            if fetch_from_github():
-                st.rerun()
-        
-        if st.button("💾 حفظ الملف محلياً", key="save_local"):
-            # قراءة الملف الحالي وتحديثه
-            machines_data = load_machines_data()
-            update_excel_with_machines(machines_data)
-            st.success("✅ تم الحفظ المحلي بنجاح!")
-        
-        if st.button("🗑️ مسح الكاش", key="clear_cache_sidebar"):
-            try:
-                if 'cache_data' in dir(st):
-                    st.cache_data.clear()
-                st.success("✅ تم مسح الكاش")
-                st.rerun()
-            except:
-                st.error("❌ تعذر مسح الكاش")
-        
-        # زر تحديث ساعات التشغيل
-        if st.button("🕐 تحديث ساعات التشغيل", key="update_hours_sidebar"):
-            st.session_state["show_update_hours"] = True
-        
-        st.markdown("---")
-        
-        # إحصائيات سريعة
-        machines_data = load_machines_data()
-        
-        total_machines = len(machines_data["machines"])
-        critical_count = 0
-        
-        for machine in machines_data["machines"]:
-            for maint in machine.get("next_maintenance", []):
-                if maint.get("remaining", {}).get("status") == "critical":
-                    critical_count += 1
-        
-        st.markdown(f"""
-        **📊 إحصائيات سريعة:**
-        
-        🛠️ **الماكينات:** {total_machines}
-        🔴 **حرجة:** {critical_count}
-        """)
-        
-        st.markdown("---")
-        
-        # زر تسجيل الخروج
-        if st.button("🚪 تسجيل الخروج", key="logout_sidebar", use_container_width=True):
-            state = load_state()
-            state[st.session_state.username]["active"] = False
-            save_state(state)
-            
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            
+    else:
+        state = cleanup_sessions(load_state())
+        user = st.session_state.username
+        role = st.session_state.user_role
+        rem = remaining_time(state, user)
+        if rem:
+            m, s = divmod(int(rem.total_seconds()), 60)
+            st.success(f"👋 {user} | {role} | ⏳ {m:02d}:{s:02d}")
+        else:
+            logout_action()
+    st.markdown("---")
+    if st.button("🔄 تحديث من GitHub"):
+        if fetch_from_github_requests():
             st.rerun()
-    
-    # العنوان الرئيسي
-    st.title(f"{APP_CONFIG['APP_ICON']} {APP_CONFIG['APP_TITLE']}")
-    
-    # عرض تحديث الساعات إذا طلب
-    if st.session_state.get("show_update_hours", False):
-        update_machine_hours_ui()
-        st.session_state["show_update_hours"] = False
-        return
-    
-    # التبويبات الرئيسية
-    tabs = st.tabs(APP_CONFIG["CUSTOM_TABS"])
-    
-    with tabs[0]:
-        dashboard_ui()
-    
-    with tabs[1]:
-        add_machine_ui()
-    
-    with tabs[2]:
-        maintenance_management_ui()
-    
-    with tabs[3]:
-        timers_dashboard_ui()
-    
-    with tabs[4]:
-        reports_ui()
-    
-    with tabs[5]:
-        settings_ui()
+    if st.button("🗑 مسح الكاش"):
+        st.cache_data.clear()
+        st.rerun()
+    st.markdown("---")
+    if st.button("🚪 تسجيل الخروج"):
+        logout_action()
 
-# تشغيل التطبيق
-if __name__ == "__main__":
-    main()
+cotton_df = load_cotton_data()
+st.title(f"{APP_CONFIG['APP_ICON']} {APP_CONFIG['APP_TITLE']}")
+
+# حساب الصلاحيات للواجهة
+perms = get_user_permissions(
+    st.session_state.get("user_role", "viewer"),
+    st.session_state.get("user_permissions", {"all_sections": False})
+)
+
+tabs_list = []
+if perms["can_input"]:
+    tabs_list.append("📥 إدخال البيانات")
+    if OCR_AVAILABLE:
+        tabs_list.append("📸 استخراج جدول من صورة")
+    else:
+        if "ocr_warning_shown" not in st.session_state:
+            st.sidebar.info("🔍 لتفعيل مسح الجدول: ثبّت pytesseract و opencv")
+            st.session_state.ocr_warning_shown = True
+if perms["can_view_stats"]:
+    tabs_list.append("📊 عرض الإحصائيات")
+
+# إضافة تبويب إدارة المستخدمين للمدير فقط
+if is_admin(st.session_state.get("username")):
+    tabs_list.append("👥 إدارة المستخدمين")
+
+if not tabs_list:
+    tabs_list = ["📊 عرض الإحصائيات"]
+
+tabs = st.tabs(tabs_list)
+idx = 0
+
+# تبويب الإدخال اليدوي
+if perms["can_input"] and "📥 إدخال البيانات" in tabs_list:
+    with tabs[idx]:
+        st.header("إدخال بيانات البالات يدوياً")
+        st.info(f"الوردية الحالية: {get_current_shift()} - {datetime.now()}")
+        with st.form("manual"):
+            col1, col2 = st.columns(2)
+            with col1:
+                sup = st.selectbox("المشرف", get_supervisors())
+                btype = st.selectbox("نوع البالة", get_bale_types())
+            with col2:
+                w = st.number_input("الوزن (كجم)", min_value=0.0, step=0.1)
+                note = st.text_input("ملاحظات")
+            if st.form_submit_button("حفظ"):
+                if w > 0:
+                    _, new_df = add_new_record(cotton_df, sup, btype, w, note)
+                    if save_cotton_data(new_df):
+                        st.success("تم الحفظ")
+                        st.rerun()
+                else:
+                    st.error("أدخل وزناً صحيحاً")
+    idx += 1
+
+# تبويب استخراج الجدول من الصورة
+if perms["can_input"] and OCR_AVAILABLE and "📸 استخراج جدول من صورة" in tabs_list:
+    with tabs[idx]:
+        st.header("رفع صورة واستخراج البيانات (مع التحرير اليدوي)")
+        st.markdown("""
+        **الطريقة:**
+        1. ارفع الصورة.
+        2. اضغط "استخراج النص الخام" لرؤية النص المستخرج.
+        3. **قم بتحرير النص** يدويًا: احذف الأحرف المشوشة، واترك الأرقام (الوزن) والكلمات (نوع البالة). مثال لكل سطر: `قماش 250 08:30`
+        4. اضغط "تحويل النص المعدل إلى جدول".
+        5. راجع الجدول وقم بتعديله ثم احفظه.
+        """)
+        
+        # زر اختبار OCR
+        if st.button("🧪 اختبار OCR"):
+            from PIL import Image, ImageDraw, ImageFont
+            img = Image.new('RGB', (300, 100), color='white')
+            d = ImageDraw.Draw(img)
+            try:
+                font = ImageFont.truetype("arial.ttf", 30)
+            except:
+                font = ImageFont.load_default()
+            d.text((10, 10), "اختبار 123", fill='black', font=font)
+            img_bytes = io.BytesIO()
+            img.save(img_bytes, format='PNG')
+            test_text = extract_raw_text_from_image(img_bytes.getvalue())
+            if "اختبار" in test_text or "123" in test_text:
+                st.success("✅ OCR يعمل بشكل صحيح!")
+            else:
+                st.error("❌ OCR لا يعمل. تأكد من تثبيت Tesseract واللغة العربية.")
+        
+        uploaded = st.file_uploader("اختر صورة (jpg, png, jpeg)", type=["jpg","jpeg","png"])
+        if uploaded:
+            st.image(uploaded, use_column_width=True)
+            if st.button("📄 استخراج النص الخام"):
+                with st.spinner("جاري استخراج النص..."):
+                    raw_text = extract_raw_text_from_image(uploaded.getvalue())
+                if raw_text.strip():
+                    st.session_state['ocr_raw_text'] = raw_text
+                    st.success("تم استخراج النص. يمكنك تعديله في المربع أدناه.")
+                else:
+                    st.error("لم يتم التعرف على أي نص. حاول رفع صورة أوضح.")
+            
+            if 'ocr_raw_text' in st.session_state:
+                edited = st.text_area("قم بتحرير النص (أزل الأحرف الغريبة، اترك الأوزان والأنواع):", 
+                                      value=st.session_state['ocr_raw_text'], height=200)
+                st.session_state['ocr_raw_text'] = edited
+                
+                if st.button("🔄 تحويل النص المعدل إلى جدول"):
+                    rows = parse_edited_text_to_table(edited)
+                    if rows:
+                        st.session_state['extracted_rows'] = rows
+                        st.success(f"تم استخراج {len(rows)} صف بنجاح")
+                    else:
+                        st.error("لم يتم العثور على أزواج (نوع، وزن) في النص. تأكد من وجود أرقام وكلمات.")
+            
+            if 'extracted_rows' in st.session_state and st.session_state['extracted_rows']:
+                df_extracted = pd.DataFrame(st.session_state['extracted_rows'])
+                df_extracted['المشرف'] = get_supervisors()[0]
+                df_extracted['ملاحظات'] = ""
+                df_extracted = df_extracted[['نوع البالة', 'وزن البالة', 'التاريخ', 'الوقت', 'المشرف', 'ملاحظات']]
+                
+                st.subheader("البيانات المستخرجة (قابل للتعديل)")
+                edited_df = st.data_editor(
+                    df_extracted,
+                    num_rows="dynamic",
+                    column_config={
+                        "نوع البالة": st.column_config.SelectboxColumn("نوع البالة", options=get_bale_types(), required=True),
+                        "وزن البالة": st.column_config.NumberColumn("الوزن (كجم)", min_value=0.0, step=0.1, required=True),
+                        "التاريخ": st.column_config.DateColumn("التاريخ", required=True),
+                        "الوقت": st.column_config.TimeColumn("الوقت", required=True),
+                        "المشرف": st.column_config.SelectboxColumn("المشرف", options=get_supervisors(), required=True),
+                        "ملاحظات": st.column_config.TextColumn("ملاحظات"),
+                    },
+                    use_container_width=True
+                )
+                
+                if st.button("💾 حفظ البيانات المستخرجة"):
+                    if edited_df.empty:
+                        st.warning("لا توجد بيانات للحفظ")
+                    else:
+                        invalid = edited_df[edited_df['وزن البالة'] <= 0]
+                        if not invalid.empty:
+                            st.error(f"يوجد {len(invalid)} صفاً وزنها غير صحيح")
+                        else:
+                            new_count = 0
+                            for _, row in edited_df.iterrows():
+                                new_record = {
+                                    'التاريخ': row['التاريخ'],
+                                    'الوقت': row['الوقت'],
+                                    'الوردية': get_current_shift(),
+                                    'المشرف': row['المشرف'],
+                                    'نوع البالة': row['نوع البالة'],
+                                    'وزن البالة': row['وزن البالة'],
+                                    'ملاحظات': row.get('ملاحظات', '')
+                                }
+                                cotton_df = pd.concat([cotton_df, pd.DataFrame([new_record])], ignore_index=True)
+                                new_count += 1
+                            if save_cotton_data(cotton_df, f"إضافة {new_count} سجل من الصورة"):
+                                st.success(f"تم حفظ {new_count} سجل بنجاح")
+                                st.rerun()
+    idx += 1
+
+# تبويب الإحصائيات
+if perms["can_view_stats"] and "📊 عرض الإحصائيات" in tabs_list:
+    with tabs[idx]:
+        st.header("الإحصائيات")
+        if cotton_df.empty:
+            st.warning("لا توجد بيانات")
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                sd = st.date_input("من", datetime.now().date() - timedelta(days=7))
+            with col2:
+                ed = st.date_input("إلى", datetime.now().date())
+            if st.button("عرض الإحصائيات"):
+                stats = generate_statistics(cotton_df, sd, ed)
+                if not stats.empty:
+                    st.dataframe(stats)
+                    total_w = stats['إجمالي الوزن'].sum()
+                    st.metric("إجمالي الوزن", f"{total_w:,.1f} كجم")
+                else:
+                    st.warning("لا توجد بيانات في هذه الفترة")
+    idx += 1
+
+# تبويب إدارة المستخدمين (للمدير فقط)
+if is_admin(st.session_state.get("username")):
+    with tabs[idx]:
+        admin_users_management_tab()
+    idx += 1
